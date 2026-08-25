@@ -1,0 +1,36 @@
+{
+  "name": "openark",
+  "version": "0.1.0",
+  "description": "Modular agents for opencode with persistent memory, personality, and self-learning",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "openark": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "biome check src tests"
+  },
+  "keywords": [
+    "opencode",
+    "agent",
+    "memory",
+    "llm"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@opencode-ai/plugin": "^1.0.0",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "chiai",
+  "description": "The openark mascot: warm, precise, a little playful",
+  "modules": {
+    "memory": true,
+    "personality": true,
+    "reflection": true,
+    "skills": true
+  },
+  "channels": {
+    "subscriptions": []
+  }
+}
