@@ -60,6 +60,81 @@ node plugin/dist/cli.js install
 node plugin/dist/cli.js start
 ```
 
+## Usage
+
+All commands go through the `openark` CLI (`node plugin/dist/cli.js` from a
+dev checkout). Run it with no arguments to see the built-in help.
+
+### Setup
+
+```sh
+openark create chiai --persona chiai   # agent home seeded from the bundled persona
+openark install                        # wire everything into opencode
+openark start                          # run the service on 127.0.0.1:8765
+```
+
+`openark install` writes the plugin shim to
+`~/.config/opencode/plugins/openark.js`, generates one opencode agent file per
+openark agent, symlinks verified skills into `~/.config/opencode/skills/`,
+copies the slash commands, and bootstraps the service venv under `~/.openark/`.
+Restart opencode afterwards to load the plugin.
+
+### Day to day
+
+Switch agents with opencode's native agent switcher — each one injects its own
+persona, memories, and lessons at session start. The slash commands:
+
+| Command    | What it does                                                        |
+| ---------- | ------------------------------------------------------------------- |
+| `/memory`  | search or add to the agent's long-term memory                       |
+| `/persona` | show the core persona, or turn feedback into learned preferences    |
+| `/learn`   | reflect on the session and store lessons from failures              |
+| `/skills`  | list learned skills, or distill a new one from a successful workflow |
+| `/channel` | share a memory or lesson with other agents                          |
+
+### Managing agents
+
+```sh
+openark list              # list agents and their descriptions
+openark create <name>     # blank agent home (edit persona.core.md yourself)
+openark rm <name> --yes   # delete an agent home (irreversible)
+openark status            # service: up / down
+```
+
+Agent state lives in `~/.openark/agents/<name>/` as plain files:
+`agent.json` (manifest), `persona.core.md` (you own this, the agent never
+rewrites it), `persona.evolving.md`, `lessons.md`, `skills/`, and
+`logs/audit.log` (every agent-authored change, with diffs). Delete the
+directory and the agent is gone.
+
+### Configuration
+
+Toggle modules per agent in `agent.json` — missing entries mean disabled, and
+toggles apply at the next session start:
+
+```json
+{ "modules": { "memory": true, "personality": true, "reflection": false, "skills": true } }
+```
+
+The service port and per-task model routing live in `~/.openark/openark.json`.
+By default background tasks (`extraction`, `reflection`, `distillation`,
+`persona_update`, `embeddings`) inherit the `small_model` configured in
+opencode; override any of them per task:
+
+```json
+{
+  "servicePort": 8765,
+  "models": {
+    "extraction": { "provider": "openai", "model": "gpt-4o-mini" }
+  }
+}
+```
+
+Useful environment variables: `OPENARK_HOME` (state root, default
+`~/.openark`), `OPENCODE_CONFIG_DIR` (default `~/.config/opencode`),
+`OPENARK_SERVICE_DIR` (service checkout for dev installs), and
+`OPENARK_SERVICE_URL` (override the service endpoint).
+
 ## Layout
 
 ```
