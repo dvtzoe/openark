@@ -52,7 +52,7 @@ node plugin/dist/cli.js     # the `openark` CLI
 | `service/openark/core/` | Agent registry, config, model routing |
 | `service/openark/modules/` | Python halves of the modules (storage, LLM calls) |
 | `service/openark/prompts/` | All LLM prompts, as editable files |
-| `personas/` (in `plugin/`) | Bundled agent templates (chiai is the default), shipped in the npm package |
+| `personas/` (in `plugin/`) | Bundled agent templates (defoko is the default), shipped in the npm package |
 
 ## Writing a module
 

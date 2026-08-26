@@ -13,12 +13,12 @@ function fakeService(overrides: Record<string, unknown> = {}): ServiceLike {
 
 function ctx(service: ServiceLike): ModuleContext {
   const manifest: AgentManifest = {
-    name: "chiai",
+    name: "defoko",
     description: "test",
     modules: { memory: true },
     channels: { subscriptions: [] },
   };
-  return { agent: "chiai", manifest, service, log: () => {} };
+  return { agent: "defoko", manifest, service, log: () => {} };
 }
 
 beforeEach(() => {
@@ -43,7 +43,7 @@ describe("memoryModule", () => {
     await memoryModule.onSessionEnd?.(context);
 
     expect(service.postJSON).toHaveBeenCalledWith(
-      "/v1/agents/chiai/memory/ingest",
+      "/v1/agents/defoko/memory/ingest",
       expect.objectContaining({ text: "user: I use neovim\nuser: I have a dog" }),
     );
 
@@ -103,11 +103,11 @@ describe("memoryModule", () => {
 
     await tools[0]?.execute({ q: "editor" });
     expect(service.getJSON).toHaveBeenCalledWith(
-      "/v1/agents/chiai/memory/recall?q=editor&limit=10",
+      "/v1/agents/defoko/memory/recall?q=editor&limit=10",
     );
 
     await tools[1]?.execute({ text: "likes tea" });
-    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/chiai/memory", {
+    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/defoko/memory", {
       text: "likes tea",
       project: expect.any(String),
     });
@@ -129,7 +129,7 @@ describe("memoryModule", () => {
     const subscribe = byName("channel_subscribe");
 
     await share.execute({ text: "User prefers vitest", channel: "#team", kind: "memory" });
-    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/chiai/channels/%23team", {
+    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/defoko/channels/%23team", {
       text: "User prefers vitest",
       kind: "memory",
     });
@@ -141,20 +141,20 @@ describe("memoryModule", () => {
     expect(service.getJSON).toHaveBeenCalledWith("/v1/channels/team");
 
     await subscribe.execute({ channel: "team" });
-    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/chiai/channels/team/subscribe", {});
+    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/defoko/channels/team/subscribe", {});
     await subscribe.execute({ channel: "team", subscribe: false });
-    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/chiai/channels/team/unsubscribe", {});
+    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/defoko/channels/team/unsubscribe", {});
   });
 
   it("renders channel provenance in injections", async () => {
     const service = fakeService({
       memories: [
         { id: "m1", text: "private fact", score: 0.9 },
-        { id: "c1", text: "shared fact", score: 0.0, source_agent: "chiai" },
+        { id: "c1", text: "shared fact", score: 0.0, source_agent: "defoko" },
       ],
     });
     const blocks = await memoryModule.injections?.(ctx(service));
     expect(blocks?.[0]?.body).toContain("- private fact");
-    expect(blocks?.[0]?.body).toContain("- shared fact (shared by chiai)");
+    expect(blocks?.[0]?.body).toContain("- shared fact (shared by defoko)");
   });
 });

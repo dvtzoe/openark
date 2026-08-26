@@ -12,12 +12,12 @@ function fakeService(overrides: Record<string, unknown> = {}): ServiceLike {
 
 function ctx(service: ServiceLike): ModuleContext {
   const manifest: AgentManifest = {
-    name: "chiai",
+    name: "defoko",
     description: "test",
     modules: { skills: true },
     channels: { subscriptions: [] },
   };
-  return { agent: "chiai", manifest, service, log: () => {} };
+  return { agent: "defoko", manifest, service, log: () => {} };
 }
 
 describe("skillsModule", () => {
@@ -52,19 +52,19 @@ describe("skillsModule", () => {
     expect(tools.map((t) => t.name)).toEqual(["skill_distill", "skills_list", "skill_verify"]);
 
     await tools[0]?.execute({ trace: "ran lint, tests, tagged" });
-    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/chiai/skills/distill", {
+    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/defoko/skills/distill", {
       trace: "ran lint, tests, tagged",
     });
     await expect(tools[0]?.execute({ trace: "  " })).rejects.toThrow("trace is required");
 
     await tools[1]?.execute({ all: true });
-    expect(service.getJSON).toHaveBeenCalledWith("/v1/agents/chiai/skills?drafts=true");
+    expect(service.getJSON).toHaveBeenCalledWith("/v1/agents/defoko/skills?drafts=true");
     await tools[1]?.execute({});
-    expect(service.getJSON).toHaveBeenCalledWith("/v1/agents/chiai/skills?drafts=false");
+    expect(service.getJSON).toHaveBeenCalledWith("/v1/agents/defoko/skills?drafts=false");
 
     await tools[2]?.execute({ name: "release-checklist" });
     expect(service.postJSON).toHaveBeenCalledWith(
-      "/v1/agents/chiai/skills/release-checklist/verify",
+      "/v1/agents/defoko/skills/release-checklist/verify",
       {},
     );
     await expect(tools[2]?.execute({})).rejects.toThrow("name is required");

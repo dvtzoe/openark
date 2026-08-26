@@ -49,29 +49,29 @@ def test_health(client):
 
 
 def test_create_list_get_delete_agent(client, tmp_path):
-    res = client.post("/v1/agents", json={"name": "chiai", "description": "mascot"})
+    res = client.post("/v1/agents", json={"name": "defoko", "description": "mascot"})
     assert res.status_code == 201
     manifest = res.json()
     assert manifest["modules"]["memory"] is True
 
     names = [a["name"] for a in client.get("/v1/agents").json()]
-    assert names == ["chiai"]
+    assert names == ["defoko"]
 
-    got = client.get("/v1/agents/chiai")
+    got = client.get("/v1/agents/defoko")
     assert got.status_code == 200
     assert got.json()["description"] == "mascot"
 
-    home = tmp_path / "openark" / "agents" / "chiai"
+    home = tmp_path / "openark" / "agents" / "defoko"
     audit = (home / "logs" / "audit.log").read_text()
     assert "agent.create" in audit
 
-    assert client.delete("/v1/agents/chiai").status_code == 204
-    assert client.get("/v1/agents/chiai").status_code == 404
+    assert client.delete("/v1/agents/defoko").status_code == 204
+    assert client.get("/v1/agents/defoko").status_code == 404
 
 
 def test_create_duplicate_agent_conflicts(client):
-    client.post("/v1/agents", json={"name": "chiai"})
-    res = client.post("/v1/agents", json={"name": "chiai"})
+    client.post("/v1/agents", json={"name": "defoko"})
+    res = client.post("/v1/agents", json={"name": "defoko"})
     assert res.status_code == 409
 
 
@@ -81,29 +81,29 @@ def test_invalid_agent_name_rejected(client):
 
 
 def test_get_persona_seeded(client):
-    client.post("/v1/agents", json={"name": "chiai"})
-    res = client.get("/v1/agents/chiai/persona")
+    client.post("/v1/agents", json={"name": "defoko"})
+    res = client.get("/v1/agents/defoko/persona")
     assert res.status_code == 200
     assert "Core persona" in res.json()["core"]
 
 
 def test_memory_endpoints(client, fake_memory):
-    client.post("/v1/agents", json={"name": "chiai"})
-    assert client.get("/v1/agents/chiai/memory/recall").json()["memories"] == []
+    client.post("/v1/agents", json={"name": "defoko"})
+    assert client.get("/v1/agents/defoko/memory/recall").json()["memories"] == []
 
     fake_memory.recall_results = [{"id": "m1", "text": "likes neovim", "score": 0.9}]
-    res = client.get("/v1/agents/chiai/memory/recall?q=editor")
+    res = client.get("/v1/agents/defoko/memory/recall?q=editor")
     assert res.json()["memories"][0]["text"] == "likes neovim"
 
     res = client.post(
-        "/v1/agents/chiai/memory", json={"text": "likes neovim", "project": "openark"}
+        "/v1/agents/defoko/memory", json={"text": "likes neovim", "project": "openark"}
     )
     assert res.status_code == 201
     assert res.json() == {"id": "m1", "event": "ADD"}
     assert fake_memory.added == [("likes neovim", {"project": "openark"})]
 
     res = client.post(
-        "/v1/agents/chiai/memory/ingest", json={"text": "user: I use neovim", "project": "openark"}
+        "/v1/agents/defoko/memory/ingest", json={"text": "user: I use neovim", "project": "openark"}
     )
     assert res.status_code == 200
     assert res.json()["added"] == 1
@@ -117,21 +117,21 @@ def test_memory_unknown_agent_404(client):
 
 
 def test_memory_module_unready_503(client, monkeypatch):
-    client.post("/v1/agents", json={"name": "chiai"})
+    client.post("/v1/agents", json={"name": "defoko"})
 
     class Unready:
         def ready(self, registry):
             return False
 
     client.app.state.modules["memory"] = Unready()
-    assert client.get("/v1/agents/chiai/memory/recall").status_code == 503
-    assert client.post("/v1/agents/chiai/memory", json={"text": "x"}).status_code == 503
-    assert client.post("/v1/agents/chiai/memory/ingest", json={"text": "x"}).status_code == 503
+    assert client.get("/v1/agents/defoko/memory/recall").status_code == 503
+    assert client.post("/v1/agents/defoko/memory", json={"text": "x"}).status_code == 503
+    assert client.post("/v1/agents/defoko/memory/ingest", json={"text": "x"}).status_code == 503
 
 
 def test_persona_endpoints(client, monkeypatch):
-    client.post("/v1/agents", json={"name": "chiai"})
-    assert client.get("/v1/agents/chiai/persona").status_code == 200
+    client.post("/v1/agents", json={"name": "defoko"})
+    assert client.get("/v1/agents/defoko/persona").status_code == 200
 
     class FakePersonaModule:
         def evolve(self, registry, agent, signals, threshold=3):
@@ -142,7 +142,7 @@ def test_persona_endpoints(client, monkeypatch):
             }
 
     client.app.state.modules["persona"] = FakePersonaModule()
-    res = client.post("/v1/agents/chiai/persona/evolve", json={"signals": ["a", "b", "c"]})
+    res = client.post("/v1/agents/defoko/persona/evolve", json={"signals": ["a", "b", "c"]})
     assert res.status_code == 200
     body = res.json()
     assert body["updated"] is True
@@ -155,16 +155,16 @@ def test_persona_endpoints(client, monkeypatch):
 
 
 def test_create_agent_with_bundled_persona(client):
-    res = client.post("/v1/agents", json={"name": "mascot", "persona": "chiai"})
+    res = client.post("/v1/agents", json={"name": "mascot", "persona": "defoko"})
     assert res.status_code == 201
     persona = client.get("/v1/agents/mascot/persona").json()
-    assert "chiai" in persona["core"]
+    assert "defoko" in persona["core"]
     assert client.post("/v1/agents", json={"name": "bad", "persona": "ghost"}).status_code == 400
-    assert "chiai" in client.get("/v1/personas").json()
+    assert "defoko" in client.get("/v1/personas").json()
 
 
 def test_lessons_endpoints(client, monkeypatch):
-    client.post("/v1/agents", json={"name": "chiai"})
+    client.post("/v1/agents", json={"name": "defoko"})
 
     class FakeLessonsModule:
         def __init__(self):
@@ -214,33 +214,33 @@ def test_lessons_endpoints(client, monkeypatch):
     fake = FakeLessonsModule()
     client.app.state.modules["lessons"] = fake
 
-    res = client.get("/v1/agents/chiai/lessons")
+    res = client.get("/v1/agents/defoko/lessons")
     assert res.status_code == 200
     assert res.json()["lessons"][0]["rule"] == "Run make lint"
 
     res = client.post(
-        "/v1/agents/chiai/lessons/reflect",
+        "/v1/agents/defoko/lessons/reflect",
         json={"failures": [{"tool": "bash", "summary": "exit 1"}], "messages": ["fix it"]},
     )
     assert res.status_code == 200
     assert res.json()["added"][0]["rule"] == "Run make lint"
     assert fake.reflected[0][0]["tool"] == "bash"
 
-    res = client.post("/v1/agents/chiai/lessons", json={"rule": "Write tests first"})
+    res = client.post("/v1/agents/defoko/lessons", json={"rule": "Write tests first"})
     assert res.status_code == 201
     assert res.json()["added"]["source"] == "manual"
 
-    res = client.post("/v1/agents/chiai/lessons/abc/retire")
+    res = client.post("/v1/agents/defoko/lessons/abc/retire")
     assert res.json()["retired"] is True
 
-    res = client.post("/v1/agents/chiai/lessons/hits", json={"ids": ["abc"], "session_id": "s1"})
+    res = client.post("/v1/agents/defoko/lessons/hits", json={"ids": ["abc"], "session_id": "s1"})
     assert res.json()["counted"] is True
 
     assert client.get("/v1/agents/ghost/lessons").status_code == 404
 
 
 def test_skills_endpoints(client):
-    client.post("/v1/agents", json={"name": "chiai"})
+    client.post("/v1/agents", json={"name": "defoko"})
 
     class FakeSkillsModule:
         def __init__(self):
@@ -268,17 +268,17 @@ def test_skills_endpoints(client):
     fake = FakeSkillsModule()
     client.app.state.modules["skills"] = fake
 
-    res = client.get("/v1/agents/chiai/skills")
+    res = client.get("/v1/agents/defoko/skills")
     assert [s["name"] for s in res.json()["skills"]] == ["live-skill"]
 
-    res = client.get("/v1/agents/chiai/skills?drafts=true")
+    res = client.get("/v1/agents/defoko/skills?drafts=true")
     assert [s["status"] for s in res.json()["skills"]] == ["draft"]
 
-    res = client.post("/v1/agents/chiai/skills/distill", json={"trace": "did a thing"})
+    res = client.post("/v1/agents/defoko/skills/distill", json={"trace": "did a thing"})
     assert res.json()["created"]["status"] == "draft"
     assert fake.distilled == "did a thing"
 
-    res = client.post("/v1/agents/chiai/skills/release-checklist/verify")
+    res = client.post("/v1/agents/defoko/skills/release-checklist/verify")
     assert res.json()["verified"] is True
     assert client.post("/v1/agents/ghost/skills/distill", json={"trace": "x"}).status_code == 404
 
@@ -286,17 +286,17 @@ def test_skills_endpoints(client):
 def test_channels_and_recall_merge(client, fake_memory):
     from openark.modules.channels import ChannelsStore
 
-    client.post("/v1/agents", json={"name": "chiai"})
+    client.post("/v1/agents", json={"name": "defoko"})
     client.post("/v1/agents", json={"name": "observer"})
     store = ChannelsStore(client.app.state.registry.root)
     client.app.state.modules["channels"] = store
 
     res = client.post(
-        "/v1/agents/chiai/channels/team",
+        "/v1/agents/defoko/channels/team",
         json={"text": "User prefers vitest over jest", "kind": "memory"},
     )
     assert res.status_code == 201
-    assert res.json()["source_agent"] == "chiai"
+    assert res.json()["source_agent"] == "defoko"
 
     items = client.get("/v1/channels/team").json()
     assert items[0]["text"] == "User prefers vitest over jest"
@@ -310,7 +310,7 @@ def test_channels_and_recall_merge(client, fake_memory):
     res = client.get("/v1/agents/observer/memory/recall?limit=5").json()
     texts = [m["text"] for m in res["memories"]]
     assert texts == ["private fact", "User prefers vitest over jest"]
-    assert res["memories"][1]["source_agent"] == "chiai"
+    assert res["memories"][1]["source_agent"] == "defoko"
 
     res = client.get("/v1/agents/observer/memory/recall?q=deploy&limit=5").json()
     assert "User prefers vitest over jest" not in [m["text"] for m in res["memories"]]

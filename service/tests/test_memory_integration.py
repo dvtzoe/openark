@@ -16,27 +16,27 @@ def module():
 
 
 def test_mem0_roundtrip(tmp_path, module):
-    home = tmp_path / "agents" / "chiai"
+    home = tmp_path / "agents" / "defoko"
     home.mkdir(parents=True)
     (home / "data").mkdir()
 
-    added = module.add(home, "chiai", "User's favorite editor is neovim.")
+    added = module.add(home, "defoko", "User's favorite editor is neovim.")
     assert added["event"] == "ADD"
 
-    module.add(home, "chiai", "User dislikes tabs and prefers spaces.")
+    module.add(home, "defoko", "User dislikes tabs and prefers spaces.")
 
-    hits = module.recall(home, "chiai", q="which editor does the user like?", limit=1)
+    hits = module.recall(home, "defoko", q="which editor does the user like?", limit=1)
     assert hits
     assert "neovim" in hits[0].text.lower()
 
-    listed = module.recall(home, "chiai", q="", limit=5)
+    listed = module.recall(home, "defoko", q="", limit=5)
     assert len(listed) == 2
 
 
 def test_mem0_ingest_without_llm_is_noop(tmp_path, module):
-    home = tmp_path / "agents" / "chiai"
+    home = tmp_path / "agents" / "defoko"
     home.mkdir(parents=True)
     (home / "data").mkdir()
-    result = module.ingest(home, "chiai", "user: I use vitest")
+    result = module.ingest(home, "defoko", "user: I use vitest")
     assert result == {"added": 0, "facts": [], "reason": "no-model"}
-    assert module.recall(home, "chiai", q="", limit=5) == []
+    assert module.recall(home, "defoko", q="", limit=5) == []

@@ -11,7 +11,7 @@ function tempHome(): string {
 describe("seedAgentHome", () => {
   it("creates the full agent skeleton", () => {
     const dir = join(tempHome(), "agent");
-    seedAgentHome(dir, "chiai", "the mascot");
+    seedAgentHome(dir, "defoko", "the mascot");
     for (const path of [
       "agent.json",
       "persona.core.md",
@@ -24,7 +24,7 @@ describe("seedAgentHome", () => {
       expect(existsSync(join(dir, path)), path).toBe(true);
     }
     const manifest = JSON.parse(readFileSync(join(dir, "agent.json"), "utf8"));
-    expect(manifest.name).toBe("chiai");
+    expect(manifest.name).toBe("defoko");
     expect(manifest.modules).toEqual({
       memory: true,
       personality: true,

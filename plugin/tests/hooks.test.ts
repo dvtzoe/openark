@@ -14,7 +14,7 @@ function fakeRuntime(): Runtime & {
     toolResults: [],
     ends: 0,
     injectionsText: "## Persona\nwarm",
-    agent: () => "chiai",
+    agent: () => "defoko",
     manifest: () => null,
     active: () => [],
     ctx: () => null,
@@ -102,9 +102,9 @@ describe("buildHooks", () => {
     const runtime = fakeRuntime();
     const hooks = buildHooks(runtime);
     await hooks["chat.message"]?.(
-      { sessionID: "s1", agent: "chiai" },
+      { sessionID: "s1", agent: "defoko" },
       {
-        message: { role: "user", agent: "chiai" },
+        message: { role: "user", agent: "defoko" },
         parts: [textPart("hello")],
       },
     );

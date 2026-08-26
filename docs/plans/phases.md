@@ -8,7 +8,7 @@ Status legend: [x] done · [~] in progress · [ ] not started
 - [x] Plugin skeleton: config, service client, module loader, 4 module stubs
 - [x] Service skeleton: FastAPI `/v1` (health, agents CRUD, persona read,
       stubbed module endpoints), agent registry, audit log
-- [x] chiai persona template, command templates, docs + plans + ADRs
+- [x] defoko persona template, command templates, docs + plans + ADRs
 - [x] `make dev/test/lint`, `openark` CLI (list/create/rm/start/status)
 
 ## Phase 2 — Service core + memory [x]
@@ -30,7 +30,7 @@ Status legend: [x] done · [~] in progress · [ ] not started
 
 - [x] Persona serve/evolve endpoints; threshold-gated evolving layer
 - [x] Audit log with diffs on every evolving-persona change
-- [x] chiai default persona wired into agent creation
+- [x] defoko default persona wired into agent creation
 
 ## Phase 5 — Reflection + lessons [x]
 
@@ -56,7 +56,7 @@ Status legend: [x] done · [~] in progress · [ ] not started
 - [x] `openark install`: plugin shim in opencode's plugins dir, venv bootstrap
       (~/.openark/venv), generated opencode agent files, verified skills
       symlinked into ~/.config/opencode/skills, command templates copied
-- [x] `openark create` seeds from bundled personas (incl. chiai)
+- [x] `openark create` seeds from bundled personas (incl. defoko)
 
 ## Phase 9 — Docs + community [x]
 

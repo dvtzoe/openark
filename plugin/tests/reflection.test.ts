@@ -12,13 +12,13 @@ function fakeService(overrides: Record<string, unknown> = {}): ServiceLike {
 
 function ctx(service: ServiceLike, sessionID?: string): ModuleContext {
   const manifest: AgentManifest = {
-    name: "chiai",
+    name: "defoko",
     description: "test",
     modules: { reflection: true },
     channels: { subscriptions: [] },
   };
   return {
-    agent: "chiai",
+    agent: "defoko",
     manifest,
     service,
     log: () => {},
@@ -64,7 +64,7 @@ describe("reflectionModule", () => {
 
     await reflectionModule.onSessionEnd?.(context);
 
-    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/chiai/lessons/reflect", {
+    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/defoko/lessons/reflect", {
       failures: [{ tool: "bash", ok: false, duration_ms: 20, summary: "exit 1: tests failed" }],
       messages: ["no, run the linter first"],
     });
@@ -153,7 +153,7 @@ describe("reflectionModule", () => {
       failures: ["I committed without running tests"],
       messages: ["run tests first"],
     });
-    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/chiai/lessons/reflect", {
+    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/defoko/lessons/reflect", {
       failures: [
         { tool: "manual", ok: false, duration_ms: 0, summary: "I committed without running tests" },
       ],
@@ -163,10 +163,10 @@ describe("reflectionModule", () => {
     await expect(tools[0]?.execute({ failures: [] })).rejects.toThrow("required");
 
     await tools[1]?.execute({ all: true });
-    expect(service.getJSON).toHaveBeenCalledWith("/v1/agents/chiai/lessons?active=false");
+    expect(service.getJSON).toHaveBeenCalledWith("/v1/agents/defoko/lessons?active=false");
 
     await tools[2]?.execute({ id: "abc123" });
-    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/chiai/lessons/abc123/retire", {});
+    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/defoko/lessons/abc123/retire", {});
     await expect(tools[2]?.execute({})).rejects.toThrow("id is required");
   });
 });

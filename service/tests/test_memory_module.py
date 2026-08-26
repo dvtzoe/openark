@@ -57,7 +57,7 @@ def test_recall_without_query_lists():
     store = FakeStore()
     store.list_results = [{"id": "m1", "memory": "likes neovim", "score": 0.7}]
     module = make_module(store)
-    items = module.recall(HOME, "chiai", q="", limit=5)
+    items = module.recall(HOME, "defoko", q="", limit=5)
     assert store.listed
     assert [(i.id, i.text, i.score) for i in items] == [("m1", "likes neovim", 0.7)]
 
@@ -69,7 +69,7 @@ def test_recall_with_query_searches_and_reranks():
         {"id": "b", "memory": "User deploys with vercel", "score": 0.5},
     ]
     module = make_module(store)
-    items = module.recall(HOME, "chiai", q="deploy with vercel", limit=1)
+    items = module.recall(HOME, "defoko", q="deploy with vercel", limit=1)
     assert store.searches == ["deploy with vercel"]
     assert [i.id for i in items] == ["b"]
 
@@ -77,7 +77,7 @@ def test_recall_with_query_searches_and_reranks():
 def test_add_stores_with_source_manual():
     store = FakeStore()
     module = make_module(store, runner=FakeRunner())
-    result = module.add(HOME, "chiai", "likes neovim", project="openark")
+    result = module.add(HOME, "defoko", "likes neovim", project="openark")
     assert result["id"] == "m1"
     assert store.adds[0]["metadata"] == {"source": "manual", "project": "openark"}
     assert store.adds[0]["infer"] is True
@@ -86,7 +86,7 @@ def test_add_stores_with_source_manual():
 def test_add_without_llm_uses_infer_false():
     store = FakeStore()
     module = make_module(store, runner=None)
-    module.add(HOME, "chiai", "likes neovim")
+    module.add(HOME, "defoko", "likes neovim")
     assert store.adds[0]["infer"] is False
 
 
@@ -94,7 +94,7 @@ def test_add_with_unavailable_route_uses_infer_false():
     store = FakeStore()
     runner = FakeRunner(available=False)
     module = make_module(store, runner=runner)
-    module.add(HOME, "chiai", "likes neovim")
+    module.add(HOME, "defoko", "likes neovim")
     assert store.adds[0]["infer"] is False
 
 
@@ -102,7 +102,7 @@ def test_ingest_with_unavailable_route_is_noop():
     store = FakeStore()
     runner = FakeRunner(available=False)
     module = make_module(store, runner=runner)
-    result = module.ingest(HOME, "chiai", "user: hello")
+    result = module.ingest(HOME, "defoko", "user: hello")
     assert result == {"added": 0, "facts": [], "reason": "no-model"}
     assert runner.calls == []
 
@@ -116,8 +116,8 @@ def test_recall_store_error_degrades_to_empty():
             raise RuntimeError("boom")
 
     module = make_module(ExplodingStore())
-    assert module.recall(HOME, "chiai", q="x") == []
-    assert module.recall(HOME, "chiai") == []
+    assert module.recall(HOME, "defoko", q="x") == []
+    assert module.recall(HOME, "defoko") == []
 
 
 def test_ingest_store_write_error_degrades():
@@ -125,7 +125,7 @@ def test_ingest_store_write_error_degrades():
     original_add = store.add
     store.add = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))  # type: ignore[assignment]
     module = make_module(store, runner=FakeRunner())
-    result = module.ingest(HOME, "chiai", "user: hi")
+    result = module.ingest(HOME, "defoko", "user: hi")
     assert result["reason"] == "store-error"
     assert result["facts"]
     store.add = original_add
@@ -135,7 +135,7 @@ def test_ingest_extracts_and_batches_facts():
     store = FakeStore()
     runner = FakeRunner()
     module = make_module(store, runner=runner)
-    result = module.ingest(HOME, "chiai", "user: I love vitest", project="openark")
+    result = module.ingest(HOME, "defoko", "user: I love vitest", project="openark")
     assert result["added"] == 2
     assert result["facts"] == ["User works in TypeScript", "User has a dog"]
     assert runner.calls[0][0] == "extraction"
@@ -149,7 +149,7 @@ def test_ingest_extracts_and_batches_facts():
 def test_ingest_without_llm_is_noop():
     store = FakeStore()
     module = make_module(store, runner=None)
-    result = module.ingest(HOME, "chiai", "user: I love vitest")
+    result = module.ingest(HOME, "defoko", "user: I love vitest")
     assert result["added"] == 0
     assert store.adds == []
 
@@ -157,7 +157,7 @@ def test_ingest_without_llm_is_noop():
 def test_ingest_llm_unavailable_degrades():
     store = FakeStore()
     module = make_module(store, runner=FakeRunner(fail=LlmUnavailable("no route")))
-    result = module.ingest(HOME, "chiai", "user: hi")
+    result = module.ingest(HOME, "defoko", "user: hi")
     assert result["added"] == 0
     assert result["reason"] and result["reason"].startswith("no-model")
 
@@ -165,14 +165,14 @@ def test_ingest_llm_unavailable_degrades():
 def test_ingest_llm_error_degrades():
     store = FakeStore()
     module = make_module(store, runner=FakeRunner(fail=RuntimeError("boom")))
-    result = module.ingest(HOME, "chiai", "user: hi")
+    result = module.ingest(HOME, "defoko", "user: hi")
     assert result == {"added": 0, "facts": [], "reason": "llm-error"}
 
 
 def test_ingest_no_facts():
     store = FakeStore()
     module = make_module(store, runner=FakeRunner(output=""))
-    result = module.ingest(HOME, "chiai", "user: hi")
+    result = module.ingest(HOME, "defoko", "user: hi")
     assert result["reason"] == "no-facts"
 
 

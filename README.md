@@ -11,7 +11,7 @@
 Modular agents for [opencode](https://opencode.ai) with persistent memory,
 personality, and self-learning from mistakes.
 
-**chiai** — the mascot and default agent — remembers you across sessions, keeps
+**defoko** — the mascot and default agent — remembers you across sessions, keeps
 a stable personality, learns lessons from failures, and distills reusable
 skills. You can run many agents side by side, each with its own persona,
 memory, and home directory, and share selected memories between them.
@@ -55,7 +55,7 @@ make service-run  # starts the openark API on 127.0.0.1:8765
 Or install end-to-end (plugin + agent files + service venv):
 
 ```sh
-node plugin/dist/cli.js create chiai --persona chiai
+node plugin/dist/cli.js create defoko --persona defoko
 node plugin/dist/cli.js install
 node plugin/dist/cli.js start
 ```
@@ -68,7 +68,7 @@ dev checkout). Run it with no arguments to see the built-in help.
 ### Setup
 
 ```sh
-openark create chiai --persona chiai   # agent home seeded from the bundled persona
+openark create defoko --persona defoko   # agent home seeded from the bundled persona
 openark install                        # wire everything into opencode
 openark start                          # run the service on 127.0.0.1:8765
 ```

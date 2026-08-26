@@ -36,6 +36,13 @@ export type InstallResult = {
   commandFiles: string[];
 };
 
+export type UninstallResult = {
+  pluginPath: string | null;
+  agentFiles: string[];
+  skillLinks: string[];
+  commandFiles: string[];
+};
+
 export function listAgents(home: string = openarkHome()): string[] {
   const dir = join(home, "agents");
   if (!existsSync(dir)) return [];
@@ -146,6 +153,76 @@ export function installCommands(
     copied.push(target);
   }
   return copied;
+}
+
+function removeIfManaged(path: string, marker: string): boolean {
+  try {
+    if (!existsSync(path) || !readFileSync(path, "utf8").includes(marker)) return false;
+  } catch {
+    return false;
+  }
+  rmSync(path, { force: true });
+  return true;
+}
+
+export function uninstallPluginShim(configDir: string): string | null {
+  const shim = join(configDir, "plugins", "openark.js");
+  return removeIfManaged(shim, MANAGED_NOTE) ? shim : null;
+}
+
+export function removeAgentFiles(configDir: string): string[] {
+  const agentsDir = join(configDir, "agents");
+  const removed: string[] = [];
+  if (!existsSync(agentsDir)) return removed;
+  for (const entry of readdirSync(agentsDir)) {
+    const path = join(agentsDir, entry);
+    if (entry.endsWith(".md") && removeIfManaged(path, MANAGED_NOTE)) removed.push(path);
+  }
+  return removed;
+}
+
+export function unlinkSkills(configDir: string, home: string = openarkHome()): string[] {
+  const skillsDir = join(configDir, "skills");
+  const removed: string[] = [];
+  if (!existsSync(skillsDir)) return removed;
+  for (const entry of readdirSync(skillsDir)) {
+    const linkPath = join(skillsDir, entry);
+    if (isOpenarkLink(linkPath, home)) {
+      rmSync(linkPath, { force: true, recursive: true });
+      removed.push(linkPath);
+    }
+  }
+  return removed;
+}
+
+export function uninstallCommands(
+  configDir: string,
+  commandsDir = join(packageRoot(), "commands"),
+): string[] {
+  const targetDir = join(configDir, "commands");
+  const removed: string[] = [];
+  if (!existsSync(targetDir) || !existsSync(commandsDir)) return removed;
+  for (const entry of readdirSync(commandsDir)) {
+    if (!entry.endsWith(".md")) continue;
+    const target = join(targetDir, entry);
+    if (existsSync(target)) {
+      rmSync(target, { force: true });
+      removed.push(target);
+    }
+  }
+  return removed;
+}
+
+export function uninstallAll(
+  configDir: string = opencodeConfigDir(),
+  home: string = openarkHome(),
+): UninstallResult {
+  return {
+    pluginPath: uninstallPluginShim(configDir),
+    agentFiles: removeAgentFiles(configDir),
+    skillLinks: unlinkSkills(configDir, home),
+    commandFiles: uninstallCommands(configDir),
+  };
 }
 
 export function installAll(

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { seedAgentHome } from "./core/agent-template.js";
 import { bootstrapVenv, venvPython } from "./core/bootstrap.js";
 import { agentHome, openarkHome, readGlobalConfig, serviceBaseUrl } from "./core/config.js";
-import { installAll, listAgents, packageRoot } from "./core/installer.js";
+import { installAll, listAgents, packageRoot, uninstallAll } from "./core/installer.js";
 import { ServiceClient } from "./core/service.js";
 
 const USAGE = `openark — modular agents for opencode
@@ -15,12 +15,14 @@ Usage: openark <command> [args]
 Commands:
   list                          list agents (~/.openark/agents)
   create <name> [--persona p]   create a new agent home (optionally seeded
-                                from a bundled persona, e.g. chiai)
+                                from a bundled persona, e.g. defoko)
   rm <name> --yes               delete an agent home (irreversible)
   start                         start the openark service (uvicorn)
   status                        check whether the service is up
   install                       wire openark into opencode (plugin shim, agent
                                 files, skills, commands, service venv)
+  uninstall                     remove openark wiring from opencode (plugin
+                                shim, agent files, skills, commands)
   version                       print version
 
 Environment:
@@ -64,7 +66,7 @@ function seedFromPersona(dir: string, name: string, persona: string): void {
   const manifest = JSON.parse(readFileSync(join(source, "agent.json"), "utf8"));
   seedAgentHome(dir, name, manifest.description);
   for (const file of ["persona.core.md", "persona.evolving.md"]) {
-    const content = readFileSync(join(source, file), "utf8").replace(/^# chiai/m, `# ${name}`);
+    const content = readFileSync(join(source, file), "utf8").replace(/^# defoko/m, `# ${name}`);
     rmSync(join(dir, file));
     writeFileSync(join(dir, file), content);
   }
@@ -161,6 +163,27 @@ function installCmd(): void {
   }
 }
 
+function uninstallCmd(): void {
+  try {
+    const result = uninstallAll();
+    console.log(
+      result.pluginPath
+        ? `plugin shim removed: ${result.pluginPath}`
+        : "plugin shim: not installed",
+    );
+    console.log(`agent files removed: ${result.agentFiles.length}`);
+    for (const file of result.agentFiles) console.log(`  ${file}`);
+    console.log(`skill links removed: ${result.skillLinks.length}`);
+    for (const link of result.skillLinks) console.log(`  ${link}`);
+    console.log(`commands removed: ${result.commandFiles.length}`);
+    for (const file of result.commandFiles) console.log(`  ${file}`);
+    console.log("done — restart opencode to unload the plugin");
+    console.log(`agent data kept under ${openarkHome()}`);
+  } catch (err) {
+    fail(String(err));
+  }
+}
+
 const [command, ...args] = process.argv.slice(2);
 
 switch (command) {
@@ -171,7 +194,7 @@ switch (command) {
     const name = args.find((a) => !a.startsWith("--"));
     const personaIndex = args.indexOf("--persona");
     const persona = personaIndex >= 0 ? args[personaIndex + 1] : undefined;
-    if (!name) fail("usage: openark create <name> [--persona chiai]");
+    if (!name) fail("usage: openark create <name> [--persona defoko]");
     createAgent(name, persona);
     break;
   }
@@ -186,6 +209,9 @@ switch (command) {
     break;
   case "install":
     installCmd();
+    break;
+  case "uninstall":
+    uninstallCmd();
     break;
   case "version":
     console.log("0.1.0");

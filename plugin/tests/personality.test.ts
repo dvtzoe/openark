@@ -12,12 +12,12 @@ function fakeService(overrides: Record<string, unknown> = {}): ServiceLike {
 
 function ctx(service: ServiceLike): ModuleContext {
   const manifest: AgentManifest = {
-    name: "chiai",
+    name: "defoko",
     description: "test",
     modules: { personality: true },
     channels: { subscriptions: [] },
   };
-  return { agent: "chiai", manifest, service, log: () => {} };
+  return { agent: "defoko", manifest, service, log: () => {} };
 }
 
 describe("personalityModule", () => {
@@ -47,7 +47,7 @@ describe("personalityModule", () => {
     expect(tools.map((t) => t.name)).toEqual(["persona_evolve"]);
 
     await tools[0]?.execute({ signals: ["likes tea", "likes tea", "prefers dark mode"] });
-    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/chiai/persona/evolve", {
+    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/defoko/persona/evolve", {
       signals: ["likes tea", "likes tea", "prefers dark mode"],
     });
   });

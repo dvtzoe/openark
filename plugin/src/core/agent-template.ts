@@ -18,7 +18,7 @@ const CORE_TEMPLATE = `# Core persona
 
 This file is yours. The agent never rewrites it — describe who they are,
 how they talk, and what they care about. See personas/ in the openark repo
-for a full example (chiai).
+for a full example (defoko).
 `;
 
 const EVOLVING_TEMPLATE = `# Learned preferences

@@ -58,7 +58,7 @@ function recordingModule(
 
 function deps(service: ServiceLike, mods: OpenArkModule[]) {
   return {
-    defaultAgent: "chiai",
+    defaultAgent: "defoko",
     service,
     loadModules: async () => mods,
     collectInjections: async () => "injected",
@@ -68,24 +68,24 @@ function deps(service: ServiceLike, mods: OpenArkModule[]) {
 
 describe("createRuntime", () => {
   it("loads the default agent and its modules", async () => {
-    const service = fakeService({ "/v1/agents/chiai": manifest({ memory: true }) });
+    const service = fakeService({ "/v1/agents/defoko": manifest({ memory: true }) });
     const mod = recordingModule("memory", true);
     const runtime = await createRuntime(deps(service, [mod]));
-    expect(runtime.agent()).toBe("chiai");
+    expect(runtime.agent()).toBe("defoko");
     expect(runtime.enabledModules()).toEqual(["memory"]);
   });
 
   it("handles an unavailable agent as no-op", async () => {
     const service = fakeService({});
     const runtime = await createRuntime(deps(service, []));
-    expect(runtime.agent()).toBe("chiai");
+    expect(runtime.agent()).toBe("defoko");
     expect(runtime.active()).toEqual([]);
     expect(await runtime.injections()).toBe("");
   });
 
   it("flushes the current agent before switching", async () => {
     const service = fakeService({
-      "/v1/agents/chiai": manifest({ memory: true }),
+      "/v1/agents/defoko": manifest({ memory: true }),
       "/v1/agents/observer": manifest({ memory: true }),
     });
     const mod = recordingModule("memory", true);
@@ -98,22 +98,22 @@ describe("createRuntime", () => {
   });
 
   it("reuses a previously loaded agent without reloading", async () => {
-    const service = fakeService({ "/v1/agents/chiai": manifest({ memory: true }) });
+    const service = fakeService({ "/v1/agents/defoko": manifest({ memory: true }) });
     const runtime = await createRuntime(deps(service, []));
-    await runtime.switchAgent("chiai");
-    await runtime.switchAgent("chiai");
-    expect(service.calls.filter((c) => c === "/v1/agents/chiai")).toHaveLength(1);
+    await runtime.switchAgent("defoko");
+    await runtime.switchAgent("defoko");
+    expect(service.calls.filter((c) => c === "/v1/agents/defoko")).toHaveLength(1);
   });
 
   it("switching to an unavailable agent keeps the previous one", async () => {
-    const service = fakeService({ "/v1/agents/chiai": manifest({ memory: true }) });
+    const service = fakeService({ "/v1/agents/defoko": manifest({ memory: true }) });
     const runtime = await createRuntime(deps(service, []));
     await runtime.switchAgent("ghost");
-    expect(runtime.agent()).toBe("chiai");
+    expect(runtime.agent()).toBe("defoko");
   });
 
   it("dispatches user messages, tool results, and session end", async () => {
-    const service = fakeService({ "/v1/agents/chiai": manifest({ memory: true }) });
+    const service = fakeService({ "/v1/agents/defoko": manifest({ memory: true }) });
     const mod = recordingModule("memory", true);
     const runtime = await createRuntime(deps(service, [mod]));
 

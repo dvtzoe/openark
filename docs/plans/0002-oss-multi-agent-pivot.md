@@ -4,7 +4,7 @@ Date: 2026-08-25 · Status: decided (current)
 
 ## Changes from 0001
 
-The project becomes an OSS project named **openark**. `chiai` is demoted to
+The project becomes an OSS project named **openark**. `defoko` is demoted to
 mascot/default persona. Multiple agents per user, each with its own
 personality, memory, and home directory; memories/lessons shareable between
 agents.

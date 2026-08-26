@@ -19,7 +19,12 @@ import {
   linkSkills,
   listAgents,
   opencodeConfigDir,
+  removeAgentFiles,
   renderAgentFile,
+  uninstallAll,
+  uninstallCommands,
+  uninstallPluginShim,
+  unlinkSkills,
 } from "../src/core/installer";
 
 let home: string;
@@ -50,10 +55,10 @@ afterEach(() => {
 describe("listAgents", () => {
   it("lists agents with manifests", () => {
     expect(listAgents(home)).toEqual([]);
-    seedAgentHome(join(home, "agents", "chiai"), "chiai");
+    seedAgentHome(join(home, "agents", "defoko"), "defoko");
     seedAgentHome(join(home, "agents", "other"), "other");
     mkdirSync(join(home, "agents", "not-an-agent"));
-    expect(listAgents(home)).toEqual(["chiai", "other"]);
+    expect(listAgents(home)).toEqual(["defoko", "other"]);
   });
 });
 
@@ -80,9 +85,9 @@ describe("installPluginShim", () => {
 
 describe("generateAgentFiles", () => {
   it("writes one primary agent file per openark agent", () => {
-    seedAgentHome(join(home, "agents", "chiai"), "chiai", "the mascot");
+    seedAgentHome(join(home, "agents", "defoko"), "defoko", "the mascot");
     const files = generateAgentFiles(configDir, home);
-    expect(files).toEqual([join(configDir, "agents", "chiai.md")]);
+    expect(files).toEqual([join(configDir, "agents", "defoko.md")]);
     const content = readFileSync(files[0], "utf8");
     expect(content).toContain("description: the mascot");
     expect(content).toContain("mode: primary");
@@ -99,9 +104,9 @@ describe("renderAgentFile", () => {
 
 describe("linkSkills", () => {
   it("symlinks verified skills and skips drafts", () => {
-    seedAgentHome(join(home, "agents", "chiai"), "chiai");
-    makeSkill("chiai", "release-checklist");
-    makeSkill("chiai", "wip-skill", true);
+    seedAgentHome(join(home, "agents", "defoko"), "defoko");
+    makeSkill("defoko", "release-checklist");
+    makeSkill("defoko", "wip-skill", true);
 
     const linked = linkSkills(configDir, home);
     expect(linked).toEqual([join(configDir, "skills", "release-checklist")]);
@@ -110,15 +115,15 @@ describe("linkSkills", () => {
   });
 
   it("prunes stale openark links and keeps foreign entries", () => {
-    seedAgentHome(join(home, "agents", "chiai"), "chiai");
+    seedAgentHome(join(home, "agents", "defoko"), "defoko");
     const skillsDir = join(configDir, "skills");
     mkdirSync(skillsDir, { recursive: true });
     const stale = join(skillsDir, "gone-skill");
-    symlinkSync(join(home, "agents", "chiai", "skills", "gone-skill"), stale, "dir");
+    symlinkSync(join(home, "agents", "defoko", "skills", "gone-skill"), stale, "dir");
     mkdirSync(join(skillsDir, "user-skill"), { recursive: true });
     writeFileSync(join(skillsDir, "user-skill", "SKILL.md"), "user skill");
 
-    makeSkill("chiai", "fresh-skill");
+    makeSkill("defoko", "fresh-skill");
     const linked = linkSkills(configDir, home);
 
     expect(existsSync(stale)).toBe(false);
@@ -144,12 +149,99 @@ describe("installCommands", () => {
 
 describe("installAll", () => {
   it("wires everything together", () => {
-    seedAgentHome(join(home, "agents", "chiai"), "chiai");
-    makeSkill("chiai", "release-checklist");
+    seedAgentHome(join(home, "agents", "defoko"), "defoko");
+    makeSkill("defoko", "release-checklist");
     const result = installAll(configDir, home);
     expect(result.pluginPath).toContain("openark.js");
     expect(result.agentFiles).toHaveLength(1);
     expect(result.skillLinks).toHaveLength(1);
     expect(result.commandFiles.length).toBeGreaterThan(0);
+  });
+});
+
+describe("uninstallPluginShim", () => {
+  it("removes the managed shim", () => {
+    installPluginShim(configDir);
+    expect(uninstallPluginShim(configDir)).toBe(join(configDir, "plugins", "openark.js"));
+    expect(existsSync(join(configDir, "plugins", "openark.js"))).toBe(false);
+  });
+
+  it("leaves a foreign shim alone", () => {
+    const pluginsDir = join(configDir, "plugins");
+    mkdirSync(pluginsDir, { recursive: true });
+    writeFileSync(join(pluginsDir, "openark.js"), "// user-owned");
+    expect(uninstallPluginShim(configDir)).toBeNull();
+    expect(existsSync(join(pluginsDir, "openark.js"))).toBe(true);
+  });
+});
+
+describe("removeAgentFiles", () => {
+  it("removes managed agent files and keeps foreign ones", () => {
+    seedAgentHome(join(home, "agents", "defoko"), "defoko");
+    generateAgentFiles(configDir, home);
+    const userFile = join(configDir, "agents", "user-agent.md");
+    mkdirSync(join(configDir, "agents"), { recursive: true });
+    writeFileSync(userFile, "---\ndescription: mine\n---\n");
+
+    const removed = removeAgentFiles(configDir);
+
+    expect(removed).toEqual([join(configDir, "agents", "defoko.md")]);
+    expect(existsSync(join(configDir, "agents", "defoko.md"))).toBe(false);
+    expect(existsSync(userFile)).toBe(true);
+  });
+});
+
+describe("unlinkSkills", () => {
+  it("removes openark links and keeps foreign entries", () => {
+    seedAgentHome(join(home, "agents", "defoko"), "defoko");
+    makeSkill("defoko", "release-checklist");
+    linkSkills(configDir, home);
+    const userSkill = join(configDir, "skills", "user-skill");
+    mkdirSync(userSkill, { recursive: true });
+    writeFileSync(join(userSkill, "SKILL.md"), "user skill");
+
+    const removed = unlinkSkills(configDir, home);
+
+    expect(removed).toEqual([join(configDir, "skills", "release-checklist")]);
+    expect(existsSync(join(configDir, "skills", "release-checklist"))).toBe(false);
+    expect(existsSync(join(userSkill, "SKILL.md"))).toBe(true);
+  });
+});
+
+describe("uninstallCommands", () => {
+  it("removes bundled commands and keeps user commands", () => {
+    installCommands(configDir, join(process.cwd(), "commands"));
+    const userCommand = join(configDir, "commands", "user-command.md");
+    writeFileSync(userCommand, "user command");
+
+    const removed = uninstallCommands(configDir, join(process.cwd(), "commands"));
+
+    expect(removed.length).toBeGreaterThan(0);
+    for (const file of removed) expect(existsSync(file)).toBe(false);
+    expect(existsSync(userCommand)).toBe(true);
+  });
+});
+
+describe("uninstallAll", () => {
+  it("reverses installAll", () => {
+    seedAgentHome(join(home, "agents", "defoko"), "defoko");
+    makeSkill("defoko", "release-checklist");
+    installAll(configDir, home);
+
+    const result = uninstallAll(configDir, home);
+
+    expect(result.pluginPath).toBe(join(configDir, "plugins", "openark.js"));
+    expect(result.agentFiles).toHaveLength(1);
+    expect(result.skillLinks).toHaveLength(1);
+    expect(result.commandFiles.length).toBeGreaterThan(0);
+    expect(existsSync(join(home, "agents", "defoko", "agent.json"))).toBe(true);
+  });
+
+  it("is a no-op when nothing is installed", () => {
+    const result = uninstallAll(configDir, home);
+    expect(result.pluginPath).toBeNull();
+    expect(result.agentFiles).toEqual([]);
+    expect(result.skillLinks).toEqual([]);
+    expect(result.commandFiles).toEqual([]);
   });
 });

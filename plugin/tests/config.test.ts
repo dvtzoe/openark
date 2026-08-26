@@ -43,9 +43,9 @@ describe("readGlobalConfig", () => {
 });
 
 describe("resolveAgentName", () => {
-  it("defaults to chiai", () => {
+  it("defaults to defoko", () => {
     delete process.env.OPENARK_AGENT;
-    expect(resolveAgentName()).toBe("chiai");
+    expect(resolveAgentName()).toBe("defoko");
   });
 
   it("honors OPENARK_AGENT", () => {

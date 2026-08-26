@@ -33,5 +33,5 @@ export function serviceBaseUrl(config: GlobalConfig): string {
 }
 
 export function resolveAgentName(): string {
-  return process.env.OPENARK_AGENT ?? "chiai";
+  return process.env.OPENARK_AGENT ?? "defoko";
 }
