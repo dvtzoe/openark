@@ -3,6 +3,11 @@
 [![CI](https://img.shields.io/badge/CI-github--actions-2088ff?logo=githubactions)](./.github/workflows/ci.yml)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](./LICENSE)
 
+> [!WARNING]
+> VIBE-CODED PROJECT
+> I wanted it to be a small thing for personal use but it ate 15$
+> so I might share it as well.
+
 Modular agents for [opencode](https://opencode.ai) with persistent memory,
 personality, and self-learning from mistakes.
 
@@ -22,12 +27,12 @@ Plain LLM sessions are stateless scripts: they forget every conversation,
 repeat mistakes, and start from zero every time. openark adds four independent
 modules on top of opencode:
 
-| Module | What it gives the agent |
-| --- | --- |
-| **memory** | Persistent recall of facts and past sessions (Mem0-backed) |
-| **personality** | A stable core persona plus a slowly evolving preferences layer |
-| **reflection** | Lessons learned from failures and user corrections (Reflexion-style) |
-| **skills** | Distilled, reusable procedures that materialize as opencode skills |
+| Module          | What it gives the agent                                              |
+| --------------- | -------------------------------------------------------------------- |
+| **memory**      | Persistent recall of facts and past sessions (Mem0-backed)           |
+| **personality** | A stable core persona plus a slowly evolving preferences layer       |
+| **reflection**  | Lessons learned from failures and user corrections (Reflexion-style) |
+| **skills**      | Distilled, reusable procedures that materialize as opencode skills   |
 
 Every module can be toggled per agent at any time. Disable all of them and
 openark becomes a no-op — zero hooks, zero background calls.
@@ -80,8 +85,8 @@ commands).
 ## Contributing
 
 Issues and PRs are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first —
-the two hard rules are *every module ships tests* and *no source file may
-exceed 999 lines* (`make lint-sizes` enforces it).
+the two hard rules are _every module ships tests_ and _no source file may
+exceed 999 lines_ (`make lint-sizes` enforces it).
 
 ## License
 
