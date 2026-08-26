@@ -15,12 +15,31 @@ class AgentManifest(BaseModel):
 class AgentCreateRequest(BaseModel):
     name: str
     description: str = "An openark agent"
+    persona: str | None = None
+
+
+class PersonaEvolveRequest(BaseModel):
+    signals: list[str] = []
+    threshold: int = 3
+
+
+class PersonaReplace(BaseModel):
+    old: str
+    new: str
+
+
+class PersonaEvolveResponse(BaseModel):
+    updated: bool = False
+    added: list[str] = []
+    replaced: list[PersonaReplace] = []
+    reason: str | None = None
 
 
 class MemoryItem(BaseModel):
     id: str
     text: str
     score: float = 0.0
+    source_agent: str | None = None
 
 
 class MemoryRecallResponse(BaseModel):
@@ -29,6 +48,23 @@ class MemoryRecallResponse(BaseModel):
 
 class MemoryCreateRequest(BaseModel):
     text: str
+    project: str | None = None
+
+
+class MemoryIngestRequest(BaseModel):
+    text: str
+    project: str | None = None
+
+
+class MemoryMutation(BaseModel):
+    id: str
+    event: str = "ADD"
+
+
+class MemoryIngestResponse(BaseModel):
+    added: int = 0
+    facts: list[str] = []
+    reason: str | None = None
 
 
 class PersonaResponse(BaseModel):
@@ -40,6 +76,8 @@ class Lesson(BaseModel):
     id: str
     rule: str
     hits: int = 0
+    status: str = "active"
+    source: str = "reflection"
 
 
 class LessonsResponse(BaseModel):
@@ -47,23 +85,84 @@ class LessonsResponse(BaseModel):
 
 
 class FailureReport(BaseModel):
-    tool: str
-    ok: bool
+    tool: str = "unknown"
+    ok: bool = False
     duration_ms: int = 0
     summary: str = ""
 
 
 class ReflectRequest(BaseModel):
-    failures: list[FailureReport]
+    failures: list[FailureReport] = []
+    messages: list[str] = []
+
+
+class LessonPayload(BaseModel):
+    id: str
+    rule: str
+    status: str
+    source: str
+    hits: int
+
+
+class ReflectResponse(BaseModel):
+    added: list[LessonPayload] = []
+    skipped: int = 0
+    reason: str | None = None
+
+
+class LessonAddRequest(BaseModel):
+    rule: str
+    source: str = "manual"
+
+
+class LessonAddResponse(BaseModel):
+    added: LessonPayload | None = None
+    reason: str | None = None
+
+
+class LessonRetireResponse(BaseModel):
+    retired: bool = False
+    reason: str | None = None
+
+
+class LessonHitsRequest(BaseModel):
+    ids: list[str] = []
+    session_id: str
+
+
+class LessonHitsResponse(BaseModel):
+    counted: bool = False
+    retired: list[str] = []
 
 
 class SkillSummary(BaseModel):
     name: str
     description: str
+    status: str = "verified"
 
 
 class SkillsResponse(BaseModel):
     skills: list[SkillSummary] = []
+
+
+class DistillRequest(BaseModel):
+    trace: str
+
+
+class SkillPayload(BaseModel):
+    name: str
+    description: str
+    status: str
+
+
+class DistillResponse(BaseModel):
+    created: SkillPayload | None = None
+    reason: str | None = None
+
+
+class SkillVerifyResponse(BaseModel):
+    verified: bool = False
+    reason: str | None = None
 
 
 class ChannelItem(BaseModel):

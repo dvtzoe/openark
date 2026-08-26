@@ -8,7 +8,7 @@ contribute code, docs, or modules.
 1. **Every module ships tests.** A PR touching `plugin/src/modules/` or
    `service/openark/modules/` without tests will not be merged.
 2. **Files stay small.** A few hundred lines is the target; **999 lines is the
-   hard cap** for *any* authored file (code, docs, config). `make lint:sizes`
+   hard cap** for *any* authored file (code, docs, config). `make lint-sizes`
    enforces this in CI. Split files instead of growing them.
 3. **Conventional commits.** `feat:`, `fix:`, `docs:`, `refactor:`, `test:`,
    `chore:`, `feat(persona):`, etc.
@@ -52,7 +52,7 @@ node plugin/dist/cli.js     # the `openark` CLI
 | `service/openark/core/` | Agent registry, config, model routing |
 | `service/openark/modules/` | Python halves of the modules (storage, LLM calls) |
 | `service/openark/prompts/` | All LLM prompts, as editable files |
-| `personas/` | Bundled agent templates (chiai is the default) |
+| `personas/` (in `plugin/`) | Bundled agent templates (chiai is the default), shipped in the npm package |
 
 ## Writing a module
 

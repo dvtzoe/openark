@@ -3,6 +3,7 @@ export type ModuleContext = {
   manifest: AgentManifest;
   service: ServiceLike;
   log: (level: "info" | "warn" | "error", message: string) => void;
+  session?: { id: string } | undefined;
 };
 
 export type ServiceLike = {
@@ -17,10 +18,14 @@ export type InjectionBlock = {
   priority: number;
 };
 
+export type ToolExecuteContext = {
+  directory: string;
+};
+
 export type ModuleTool = {
   name: string;
   description: string;
-  execute(args: Record<string, unknown>): Promise<unknown>;
+  execute(args: Record<string, unknown>, context?: ToolExecuteContext): Promise<unknown>;
 };
 
 export type UserMessageEvent = {

@@ -12,7 +12,7 @@
 - [ ] `make lint` passes (biome, ruff, file-size cap)
 - [ ] `make test` passes
 - [ ] Docs updated for user-facing behavior
-- [ ] No file exceeds 999 lines (`make lint:sizes`)
+- [ ] No file exceeds 999 lines (`make lint-sizes`)
 - [ ] New/changed API endpoints update the `/v1` contract
 - [ ] Prompts added under `service/openark/prompts/` (not inline)
 - [ ] Architecture change? New ADR in `docs/adr/`

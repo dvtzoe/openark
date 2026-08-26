@@ -12,7 +12,7 @@ exempt too).
 
 - Hard cap: **999 lines** for every authored file.
 - Target: a few hundred lines.
-- Enforced by `scripts/check_file_sizes.sh` (`make lint:sizes`) in CI;
+- Enforced by `scripts/check_file_sizes.sh` (`make lint-sizes`) in CI;
   `package-lock.json` and build output are exempt.
 
 ## Consequences

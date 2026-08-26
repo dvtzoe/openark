@@ -2,7 +2,26 @@ from fastapi import FastAPI
 
 from .api.v1.router import router as v1_router
 from .core.config import get_settings
+from .core.llm import build_task_runner
 from .core.registry import AgentRegistry
+
+
+def build_modules() -> dict:
+    from .modules.channels import ChannelsStore
+    from .modules.lessons import LessonsModule
+    from .modules.memory import MemoryModule
+    from .modules.persona import PersonaModule
+    from .modules.skills import SkillsModule
+
+    runner = build_task_runner()
+    settings = get_settings()
+    return {
+        "memory": MemoryModule(runner=runner),
+        "persona": PersonaModule(runner=runner),
+        "lessons": LessonsModule(runner=runner),
+        "skills": SkillsModule(runner=runner),
+        "channels": ChannelsStore(settings.root),
+    }
 
 
 def create_app() -> FastAPI:
@@ -14,6 +33,8 @@ def create_app() -> FastAPI:
     settings = get_settings()
     registry = AgentRegistry(settings.root)
     registry.ensure_layout()
+    app.state.registry = registry
+    app.state.modules = build_modules()
 
     app.include_router(v1_router)
     return app

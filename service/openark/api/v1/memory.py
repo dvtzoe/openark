@@ -1,10 +1,41 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ...core.models import MemoryCreateRequest, MemoryRecallResponse
-from ...core.registry import AgentRegistry
+from ...core.models import (
+    MemoryCreateRequest,
+    MemoryIngestRequest,
+    MemoryIngestResponse,
+    MemoryItem,
+    MemoryMutation,
+    MemoryRecallResponse,
+)
+from ...core.registry import AgentNotFound, AgentRegistry
 from .agents import get_registry
 
 router = APIRouter(tags=["memory"])
+
+UNAVAILABLE = "memory module unavailable (install openark-service[memory])"
+
+
+def get_memory_module(request: Request):
+    return request.app.state.modules["memory"]
+
+
+def get_channels_store(request: Request):
+    return request.app.state.modules["channels"]
+
+
+def _require_agent(registry: AgentRegistry, name: str):
+    try:
+        registry.get(name)
+    except AgentNotFound as err:
+        raise HTTPException(status_code=404, detail="no such agent") from err
+    return registry.agent_home(name)
+
+
+def _require_module(module, registry: AgentRegistry):
+    if not module.ready(registry):
+        raise HTTPException(status_code=503, detail=UNAVAILABLE)
+    return module
 
 
 @router.get("/agents/{name}/memory/recall", response_model=MemoryRecallResponse)
@@ -13,25 +44,50 @@ def recall(
     q: str = "",
     limit: int = 10,
     registry: AgentRegistry = Depends(get_registry),
+    module=Depends(get_memory_module),
+    channels=Depends(get_channels_store),
 ):
-    if not registry.exists(name):
-        raise HTTPException(status_code=404, detail="no such agent")
-    return MemoryRecallResponse(memories=[])
+    agent_home = _require_agent(registry, name)
+    module = _require_module(module, registry)
+    memories = module.recall(agent_home, name, q=q, limit=limit)
+    remaining = limit - len(memories)
+    if remaining > 0:
+        for item in channels.subscribed_items(registry, name, q=q, limit=remaining):
+            memories.append(
+                MemoryItem(
+                    id=str(item.get("id", "")),
+                    text=str(item.get("text", "")),
+                    score=0.0,
+                    source_agent=str(item.get("source_agent", "")) or None,
+                )
+            )
+    return MemoryRecallResponse(memories=memories)
 
 
-@router.post("/agents/{name}/memory", status_code=501)
+@router.post("/agents/{name}/memory", response_model=MemoryMutation, status_code=201)
 def add_memory(
     name: str,
     request: MemoryCreateRequest,
     registry: AgentRegistry = Depends(get_registry),
+    module=Depends(get_memory_module),
 ):
-    raise HTTPException(status_code=501, detail="memory write lands in phase 2")
+    agent_home = _require_agent(registry, name)
+    module = _require_module(module, registry)
+    result = module.add(agent_home, name, request.text, project=request.project)
+    if result is None:
+        raise HTTPException(status_code=502, detail="memory write failed")
+    return MemoryMutation(id=str(result.get("id", "")), event=str(result.get("event", "ADD")))
 
 
-@router.post("/agents/{name}/memory/ingest", status_code=501)
+@router.post("/agents/{name}/memory/ingest", response_model=MemoryIngestResponse)
 def ingest(
     name: str,
-    request: MemoryCreateRequest,
+    request: MemoryIngestRequest,
     registry: AgentRegistry = Depends(get_registry),
+    module=Depends(get_memory_module),
 ):
-    raise HTTPException(status_code=501, detail="extraction lands in phase 2")
+    agent_home = _require_agent(registry, name)
+    module = _require_module(module, registry)
+    return MemoryIngestResponse(
+        **module.ingest(agent_home, name, request.text, project=request.project)
+    )

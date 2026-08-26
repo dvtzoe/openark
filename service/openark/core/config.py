@@ -38,16 +38,22 @@ def _default_root() -> Path:
 
 def _load_settings() -> Settings:
     root = _default_root()
-    settings = Settings(root=root)
+    overrides: dict[str, Any] = {}
     config_path = root / "openark.json"
     if config_path.exists():
         try:
             raw = json.loads(config_path.read_text())
-            settings.service_port = int(raw.get("servicePort", settings.service_port))
-            settings.models = raw.get("models", {})
+            if isinstance(raw, dict):
+                if "servicePort" in raw:
+                    overrides["service_port"] = int(raw["servicePort"])
+                if isinstance(raw.get("models"), dict):
+                    overrides["models"] = raw["models"]
         except (ValueError, OSError):
             pass
-    return settings
+    try:
+        return Settings(root=root, **overrides)
+    except ValueError:
+        return Settings(root=root)
 
 
 @lru_cache(maxsize=1)
@@ -57,11 +63,3 @@ def get_settings() -> Settings:
 
 def reset_settings_cache() -> None:
     get_settings.cache_clear()
-
-
-def resolve_task_model(task: str) -> dict[str, Any]:
-    settings = get_settings()
-    route = settings.models.get(task)
-    if route is None:
-        return {"inherit": "small"}
-    return route.model_dump()

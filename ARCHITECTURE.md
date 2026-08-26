@@ -6,7 +6,7 @@ How the pieces fit together. For per-module design see
 
 ```
 ┌───────────────────────────── opencode ─────────────────────────────┐
-│  generated agent files (~/.config/opencode/agent/<name>.md)        │
+│  generated agent files (~/.config/opencode/agents/<name>.md)       │
 │                    │ native Tab switcher picks the agent            │
 │                    ▼                                               │
 │  openark plugin (TypeScript, thin)                                 │
@@ -21,11 +21,11 @@ How the pieces fit together. For per-module design see
 │  api/v1: health · agents · memory · persona · lessons · skills     │
 │  core: agent registry · config · model routing (per task)          │
 │  modules: storage + LLM calls (Mem0, Chroma embedded, prompts)     │
-└──────────────┬────────────────────────────────────────────────────┘
-               ▼
+└────────────────┬──────────────────────────────────────────────────┘
+                 ▼
 ~/.openark/                    all runtime state, plain files
 ├── openark.json               port + per-task model routing
-├── venv/                      service virtualenv (auto-bootstrapped)
+├── venv/                      service virtualenv (bootstrapped by install)
 ├── agents/<name>/             one home per agent
 │   ├── agent.json             manifest: module toggles, channel subs
 │   ├── persona.core.md        user-authored, never auto-rewritten
@@ -45,8 +45,8 @@ How the pieces fit together. For per-module design see
 2. **User message** — enabled modules contribute injection blocks
    (persona, recalled memories, active lessons) via
    `experimental.chat.system.transform`, token-budgeted.
-3. **Tool results** — `tool.execute.after` feeds failures (non-zero exits,
-   reverted edits) to the reflection module's trigger queue.
+3. **Tool results** — tool failures (errored tool parts) feed the reflection
+   module's trigger queue via the `event` hook.
 4. **Background work** — extraction, reflection, and distillation run in the
    service using per-task model routing from `openark.json`.
 5. **Session end** — queued work flushes: memories consolidate, lessons
@@ -71,7 +71,9 @@ How the pieces fit together. For per-module design see
 - Any number of agents, each with its own home, persona, memory, lessons, and
   skills (`openark create <name>`).
 - One opencode agent file per openark agent, generated and managed by the
-  CLI (`openark install`).
+  CLI (`openark install`) under `~/.config/opencode/agents/`.
+- Verified skills are symlinked into `~/.config/opencode/skills/` so
+  opencode's native skill discovery picks them up (drafts are not linked).
 - **Channels** are the sharing mechanism: an agent tags a memory or lesson
   into a channel; other agents subscribe to channels they trust. Every item
   carries source-agent provenance, and private memory always takes precedence

@@ -11,9 +11,10 @@ a stable personality, learns lessons from failures, and distills reusable
 skills. You can run many agents side by side, each with its own persona,
 memory, and home directory, and share selected memories between them.
 
-> **Status: pre-alpha (Phase 1 scaffold).** The architecture is in place and the
-> service builds/runs, but the memory/personality/learning modules are still
-> being filled in. See [docs/plans/phases.md](docs/plans/phases.md).
+> **Status: pre-alpha.** All nine build phases are in: memory, personality,
+> reflection, skills, channels, and the installer work end-to-end against a
+> live opencode. Expect rough edges and prompt iteration. See
+> [docs/plans/phases.md](docs/plans/phases.md) and [ROADMAP.md](ROADMAP.md).
 
 ## Why openark?
 
@@ -46,18 +47,27 @@ Run the service locally:
 make service-run  # starts the openark API on 127.0.0.1:8765
 ```
 
+Or install end-to-end (plugin + agent files + service venv):
+
+```sh
+node plugin/dist/cli.js create chiai --persona chiai
+node plugin/dist/cli.js install
+node plugin/dist/cli.js start
+```
+
 ## Layout
 
 ```
 plugin/    TypeScript opencode plugin (orchestrator + modules) — npm: openark
+           personas/ and commands/ ship inside the npm package
 service/   Python FastAPI service (memory, persona, lessons, skills) — PyPI: openark-service
-personas/  Bundled agent templates; chiai is the default
-commands/  opencode command templates (/learn /memory /persona /channel /skills)
 docs/      Design docs, module spec, ADRs, and plans
 ```
 
 Runtime state lives under `~/.openark/` — one directory per agent, plain
-inspectable files, delete an agent by deleting its directory.
+inspectable files, delete an agent by deleting its directory. `openark
+install` wires everything into opencode (plugin, agent files, skills,
+commands).
 
 ## Documentation
 
@@ -71,7 +81,7 @@ inspectable files, delete an agent by deleting its directory.
 
 Issues and PRs are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first —
 the two hard rules are *every module ships tests* and *no source file may
-exceed 999 lines* (`make lint:sizes` enforces it).
+exceed 999 lines* (`make lint-sizes` enforces it).
 
 ## License
 

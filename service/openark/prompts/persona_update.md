@@ -1,6 +1,6 @@
 ---
 name: persona_update
-version: 1
+version: 2
 task: persona_update
 ---
 
@@ -15,9 +15,10 @@ New signals from the conversation:
 {signals}
 
 Rules:
-- Output only lines that should be ADDED or REPLACED (prefix replaced lines
-  with "- replaces: <existing line>").
+- Output one change per line.
+- To add a preference, output the preference as a plain line.
+- To replace one, output "- replaces: <existing line>" and put the new
+  preference on the next line.
 - Only include preferences supported by at least {threshold} distinct signals.
-- Never output personality traits — preferences about the user and workflow only.
-
-Proposed updates:
+- Never rewrite the core persona; only these learned preferences.
+- Output nothing if no change clears the threshold.

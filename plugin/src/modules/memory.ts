@@ -1,12 +1,33 @@
-import type {
-  InjectionBlock,
-  ModuleContext,
-  ModuleTool,
-  OpenArkModule,
-  ToolResultEvent,
-} from "../core/types.js";
+import { basename } from "node:path";
+import type { InjectionBlock, ModuleContext, ModuleTool, OpenArkModule } from "../core/types.js";
+import type { ToolExecuteContext } from "../core/types.js";
+import type { components } from "../generated/api-types.js";
 
-type RecallResponse = { memories: { id: string; text: string; score: number }[] };
+type MemoryItem = components["schemas"]["MemoryItem"];
+type RecallResponse = components["schemas"]["MemoryRecallResponse"];
+type MutationResponse = components["schemas"]["MemoryMutation"];
+type IngestResponse = components["schemas"]["MemoryIngestResponse"];
+type ChannelItem = components["schemas"]["ChannelItem"];
+
+function provenanceLine(m: MemoryItem): string {
+  return m.source_agent ? `- ${m.text} (shared by ${m.source_agent})` : `- ${m.text}`;
+}
+
+const MAX_BUFFERED_MESSAGES = 200;
+
+const transcript: string[] = [];
+
+function currentProject(directory?: string): string | undefined {
+  try {
+    return basename(directory ?? process.cwd()) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resetTranscript(): void {
+  transcript.length = 0;
+}
 
 export const memoryModule: OpenArkModule = {
   name: "memory",
@@ -18,24 +39,34 @@ export const memoryModule: OpenArkModule = {
     }
   },
 
-  async onUserMessage(ctx, message) {
-    if (!message.text.trim()) return;
+  async onUserMessage(_ctx, message) {
+    const text = message.text.trim();
+    if (!text) return;
+    if (transcript.length >= MAX_BUFFERED_MESSAGES) transcript.shift();
+    transcript.push(`user: ${text}`);
+  },
+
+  async onSessionEnd(ctx) {
+    if (!transcript.length) return;
+    const conversation = transcript.join("\n");
+    resetTranscript();
+    const project = currentProject();
     await ctx.service
-      .postJSON(`/v1/agents/${ctx.agent}/memory/ingest`, {
-        text: message.text,
+      .postJSON<IngestResponse>(`/v1/agents/${ctx.agent}/memory/ingest`, {
+        text: conversation,
+        project,
       })
       .catch(() => undefined);
   },
-
-  async onToolResult(_ctx, _result: ToolResultEvent) {},
 
   async injections(ctx: ModuleContext): Promise<InjectionBlock[]> {
     try {
       const res = await ctx.service.getJSON<RecallResponse>(
         `/v1/agents/${ctx.agent}/memory/recall?limit=20`,
       );
-      if (!res.memories.length) return [];
-      const lines = res.memories.map((m) => `- ${m.text}`).join("\n");
+      const memories = (res.memories ?? []).filter((m: MemoryItem) => m.text?.trim());
+      if (!memories.length) return [];
+      const lines = memories.map((m: MemoryItem) => provenanceLine(m)).join("\n");
       return [
         {
           title: "Remembered about you",
@@ -55,7 +86,7 @@ export const memoryModule: OpenArkModule = {
         description: "Search this agent's long-term memory",
         execute: async (args) => {
           const q = typeof args.q === "string" ? args.q : "";
-          return ctx.service.getJSON(
+          return ctx.service.getJSON<RecallResponse>(
             `/v1/agents/${ctx.agent}/memory/recall?q=${encodeURIComponent(q)}&limit=10`,
           );
         },
@@ -63,12 +94,58 @@ export const memoryModule: OpenArkModule = {
       {
         name: "memory_add",
         description: "Store a durable fact in this agent's long-term memory",
-        execute: async (args) => {
+        execute: async (args, context?: ToolExecuteContext) => {
           const text = typeof args.text === "string" ? args.text : "";
           if (!text.trim()) throw new Error("text is required");
-          return ctx.service.postJSON(`/v1/agents/${ctx.agent}/memory`, { text });
+          return ctx.service.postJSON<MutationResponse>(`/v1/agents/${ctx.agent}/memory`, {
+            text,
+            project: currentProject(context?.directory),
+          });
+        },
+      },
+      {
+        name: "channel_share",
+        description:
+          "Share a memory or lesson with a channel other agents can subscribe to. " +
+          "The user must confirm before pushing. Channel names look like 'team' or '#team'.",
+        execute: async (args) => {
+          const text = typeof args.text === "string" ? args.text : "";
+          const channel = typeof args.channel === "string" ? args.channel : "";
+          const kind = args.kind === "lesson" ? "lesson" : "memory";
+          if (!text.trim()) throw new Error("text is required");
+          if (!channel.trim()) throw new Error("channel is required");
+          return ctx.service.postJSON<ChannelItem>(
+            `/v1/agents/${ctx.agent}/channels/${encodeURIComponent(channel.trim())}`,
+            { text, kind },
+          );
+        },
+      },
+      {
+        name: "channel_items",
+        description: "List items shared in a channel",
+        execute: async (args) => {
+          const channel = typeof args.channel === "string" ? args.channel : "";
+          if (!channel.trim()) throw new Error("channel is required");
+          return ctx.service.getJSON<ChannelItem[]>(
+            `/v1/channels/${encodeURIComponent(channel.trim())}`,
+          );
+        },
+      },
+      {
+        name: "channel_subscribe",
+        description: "Subscribe (or unsubscribe with subscribe: false) to a channel",
+        execute: async (args) => {
+          const channel = typeof args.channel === "string" ? args.channel : "";
+          if (!channel.trim()) throw new Error("channel is required");
+          const action = args.subscribe === false ? "unsubscribe" : "subscribe";
+          return ctx.service.postJSON<string[]>(
+            `/v1/agents/${ctx.agent}/channels/${encodeURIComponent(channel.trim())}/${action}`,
+            {},
+          );
         },
       },
     ];
   },
 };
+
+export { resetTranscript };

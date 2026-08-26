@@ -1,6 +1,10 @@
-import type { InjectionBlock, ModuleContext, OpenArkModule } from "../core/types.js";
+import type { InjectionBlock, ModuleContext, ModuleTool, OpenArkModule } from "../core/types.js";
+import type { components } from "../generated/api-types.js";
 
-type SkillsResponse = { skills: { name: string; description: string }[] };
+type SkillsResponse = components["schemas"]["SkillsResponse"];
+type DistillResponse = components["schemas"]["DistillResponse"];
+type SkillVerifyResponse = components["schemas"]["SkillVerifyResponse"];
+type Skill = components["schemas"]["SkillSummary"];
 
 export const skillsModule: OpenArkModule = {
   name: "skills",
@@ -15,8 +19,9 @@ export const skillsModule: OpenArkModule = {
   async injections(ctx: ModuleContext): Promise<InjectionBlock[]> {
     try {
       const res = await ctx.service.getJSON<SkillsResponse>(`/v1/agents/${ctx.agent}/skills`);
-      if (!res.skills.length) return [];
-      const lines = res.skills.map((s) => `- ${s.name}: ${s.description}`).join("\n");
+      const skills = (res.skills ?? []).filter((s: Skill) => s.name?.trim());
+      if (!skills.length) return [];
+      const lines = skills.map((s: Skill) => `- ${s.name}: ${s.description}`).join("\n");
       return [
         {
           title: "Learned skills available",
@@ -27,5 +32,47 @@ export const skillsModule: OpenArkModule = {
     } catch {
       return [];
     }
+  },
+
+  tools(ctx: ModuleContext): ModuleTool[] {
+    return [
+      {
+        name: "skill_distill",
+        description:
+          "Distill a successfully completed multi-step workflow into a reusable draft skill. " +
+          "Pass the workflow trace (what you did, in order) as the trace argument.",
+        execute: async (args) => {
+          const trace = typeof args.trace === "string" ? args.trace.trim() : "";
+          if (!trace) throw new Error("trace is required");
+          return ctx.service.postJSON<DistillResponse>(`/v1/agents/${ctx.agent}/skills/distill`, {
+            trace,
+          });
+        },
+      },
+      {
+        name: "skills_list",
+        description: "List learned skills (verified by default; pass all: true to include drafts)",
+        execute: async (args) => {
+          const includeDrafts = args.all === true;
+          return ctx.service.getJSON<SkillsResponse>(
+            `/v1/agents/${ctx.agent}/skills?drafts=${includeDrafts ? "true" : "false"}`,
+          );
+        },
+      },
+      {
+        name: "skill_verify",
+        description:
+          "Verify a draft skill by name, promoting it so it is advertised and materialized " +
+          "as an opencode skill. Use after one successful reuse or explicit user approval.",
+        execute: async (args) => {
+          const slug = typeof args.name === "string" ? args.name.trim() : "";
+          if (!slug) throw new Error("name is required");
+          return ctx.service.postJSON<SkillVerifyResponse>(
+            `/v1/agents/${ctx.agent}/skills/${encodeURIComponent(slug)}/verify`,
+            {},
+          );
+        },
+      },
+    ];
   },
 };

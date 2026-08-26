@@ -7,8 +7,8 @@ export function openarkHome(): string {
   return process.env.OPENARK_HOME ?? join(homedir(), ".openark");
 }
 
-export function agentHome(agent: string): string {
-  return join(openarkHome(), "agents", agent);
+export function agentHome(agent: string, home: string = openarkHome()): string {
+  return join(home, "agents", agent);
 }
 
 export function readGlobalConfig(): GlobalConfig {

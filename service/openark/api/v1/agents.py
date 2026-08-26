@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ...core.config import get_settings
 from ...core.models import AgentCreateRequest, AgentManifest
-from ...core.registry import AgentAlreadyExists, AgentNotFound, AgentRegistry
+from ...core.registry import AgentAlreadyExists, AgentNotFound, AgentRegistry, UnknownPersona
 
 router = APIRouter(tags=["agents"])
 
@@ -22,9 +22,11 @@ def create_agent(
     registry: AgentRegistry = Depends(get_registry),
 ):
     try:
-        return registry.create(request.name, request.description)
+        return registry.create(request.name, request.description, persona=request.persona)
     except AgentAlreadyExists as err:
         raise HTTPException(status_code=409, detail="agent already exists") from err
+    except UnknownPersona as err:
+        raise HTTPException(status_code=400, detail=f"unknown persona: {err.args[0]}") from err
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 

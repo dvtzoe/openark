@@ -11,7 +11,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-memory = ["mem0ai>=0.1.100"]
+memory = [
+  "mem0ai>=2.0",
+  "chromadb>=1.0",
+  "fastembed>=0.4",
+]
 dev = [
   "httpx>=0.27",
   "pytest>=8.3",

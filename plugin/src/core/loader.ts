@@ -1,10 +1,8 @@
 import { allModules } from "../modules/index.js";
 import type { AgentManifest, ModuleContext, OpenArkModule } from "./types.js";
 
-export type LoadedModules = {
-  active: OpenArkModule[];
-  ctx: ModuleContext;
-};
+const DEFAULT_BUDGET_CHARS = 16000;
+const MIN_BLOCK_CHARS = 50;
 
 export async function loadModules(ctx: ModuleContext): Promise<OpenArkModule[]> {
   const active: OpenArkModule[] = [];
@@ -23,6 +21,7 @@ export async function loadModules(ctx: ModuleContext): Promise<OpenArkModule[]> 
 export async function collectInjections(
   active: OpenArkModule[],
   ctx: ModuleContext,
+  budgetChars = DEFAULT_BUDGET_CHARS,
 ): Promise<string> {
   const blocks = [];
   for (const mod of active) {
@@ -30,7 +29,18 @@ export async function collectInjections(
     blocks.push(...(await mod.injections(ctx)));
   }
   blocks.sort((a, b) => b.priority - a.priority);
-  return blocks.map((b) => `## ${b.title}\n${b.body}`).join("\n\n");
+  const kept = [];
+  let used = 0;
+  for (const block of blocks) {
+    const header = kept.length ? "\n\n" : "";
+    const remaining = budgetChars - used - header.length;
+    if (remaining < MIN_BLOCK_CHARS) break;
+    let body = `## ${block.title}\n${block.body}`;
+    if (body.length > remaining) body = body.slice(0, remaining);
+    kept.push(body);
+    used += header.length + body.length;
+  }
+  return kept.join("\n\n");
 }
 
 export function manifestAllows(manifest: AgentManifest, moduleName: string): boolean {

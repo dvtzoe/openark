@@ -24,7 +24,8 @@ done < <(find . -type f \
   -not -path '*/__pycache__/*' \
   -not -name 'LICENSE' \
   -not -name 'package-lock.json' \
-  -not -name 'uv.lock')
+  -not -name 'uv.lock' \
+  -not -path './plugin/src/generated/*')
 
 if (( fail )); then
   echo "File size cap exceeded. Split the file(s) listed above."

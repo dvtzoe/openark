@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 import json
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
 from ..core.models import AgentManifest
+
+BUNDLED_PERSONAS = Path(__file__).parent.parent / "personas"
 
 DEFAULT_MODULES = {
     "memory": True,
@@ -27,7 +32,7 @@ Preference updates only land here after crossing a confidence threshold.
 LESSONS_TEMPLATE = """# Lessons
 
 Rules this agent learned from failures and corrections.
-Format: "- [status] rule (source, hits)" — managed by openark.
+Format: "- [status] rule (source: X, hits: N, stale: M)" — managed by openark.
 """
 
 
@@ -36,6 +41,10 @@ class AgentNotFound(KeyError):
 
 
 class AgentAlreadyExists(ValueError):
+    pass
+
+
+class UnknownPersona(ValueError):
     pass
 
 
@@ -73,10 +82,32 @@ class AgentRegistry:
         raw = json.loads(path.read_text())
         return AgentManifest.model_validate(raw)
 
-    def create(self, name: str, description: str = "An openark agent") -> AgentManifest:
+    def save_manifest(self, manifest: AgentManifest) -> None:
+        path = self.agent_home(manifest.name) / "agent.json"
+        if not path.exists():
+            raise AgentNotFound(manifest.name)
+        path.write_text(json.dumps(manifest.model_dump(), indent=2) + "\n")
+
+    def bundled_personas(self) -> list[str]:
+        if not BUNDLED_PERSONAS.exists():
+            return []
+        return sorted(
+            entry.name
+            for entry in BUNDLED_PERSONAS.iterdir()
+            if (entry / "persona.core.md").is_file()
+        )
+
+    def create(
+        self,
+        name: str,
+        description: str = "An openark agent",
+        persona: str | None = None,
+    ) -> AgentManifest:
         home = self.agent_home(name)
         if home.exists():
             raise AgentAlreadyExists(name)
+        if persona is not None and persona not in self.bundled_personas():
+            raise UnknownPersona(persona)
         manifest = AgentManifest(
             name=name,
             description=description,
@@ -85,19 +116,22 @@ class AgentRegistry:
         for sub in ("skills", "data", "logs"):
             (home / sub).mkdir(parents=True)
         (home / "agent.json").write_text(json.dumps(manifest.model_dump(), indent=2) + "\n")
-        (home / "persona.core.md").write_text(CORE_TEMPLATE)
-        (home / "persona.evolving.md").write_text(EVOLVING_TEMPLATE)
+        if persona:
+            source = BUNDLED_PERSONAS / persona
+            (home / "persona.core.md").write_text((source / "persona.core.md").read_text())
+            (home / "persona.evolving.md").write_text((source / "persona.evolving.md").read_text())
+        else:
+            (home / "persona.core.md").write_text(CORE_TEMPLATE)
+            (home / "persona.evolving.md").write_text(EVOLVING_TEMPLATE)
         (home / "lessons.md").write_text(LESSONS_TEMPLATE)
         (home / "logs" / "audit.log").write_text("")
-        self.audit(name, "agent.create", description)
+        self.audit(name, "agent.create", f"persona={persona or 'default'} {description}".strip())
         return manifest
 
     def delete(self, name: str) -> None:
         home = self.agent_home(name)
         if not (home / "agent.json").exists():
             raise AgentNotFound(name)
-        import shutil
-
         shutil.rmtree(home)
 
     def read_persona(self, name: str) -> tuple[str, str]:
@@ -107,6 +141,13 @@ class AgentRegistry:
         core = (home / "persona.core.md").read_text()
         evolving = (home / "persona.evolving.md").read_text()
         return core, evolving
+
+    def write_persona(self, name: str, core: str, evolving: str) -> None:
+        home = self.agent_home(name)
+        if not (home / "agent.json").exists():
+            raise AgentNotFound(name)
+        (home / "persona.core.md").write_text(core)
+        (home / "persona.evolving.md").write_text(evolving)
 
     def audit(self, agent: str, action: str, detail: str = "") -> None:
         home = self.agent_home(agent)

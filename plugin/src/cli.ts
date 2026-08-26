@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { seedAgentHome } from "./core/agent-template.js";
+import { bootstrapVenv, venvPython } from "./core/bootstrap.js";
 import { agentHome, openarkHome, readGlobalConfig, serviceBaseUrl } from "./core/config.js";
+import { installAll, listAgents, packageRoot } from "./core/installer.js";
 import { ServiceClient } from "./core/service.js";
 
 const USAGE = `openark — modular agents for opencode
@@ -11,17 +13,20 @@ const USAGE = `openark — modular agents for opencode
 Usage: openark <command> [args]
 
 Commands:
-  list                 list agents (~/.openark/agents)
-  create <name>        create a new agent home with default files
-  rm <name> --yes      delete an agent home (irreversible)
-  start                start the openark service (uvicorn)
-  status               check whether the service is up
-  install              wire openark into opencode (coming in phase 8)
-  version              print version
+  list                          list agents (~/.openark/agents)
+  create <name> [--persona p]   create a new agent home (optionally seeded
+                                from a bundled persona, e.g. chiai)
+  rm <name> --yes               delete an agent home (irreversible)
+  start                         start the openark service (uvicorn)
+  status                        check whether the service is up
+  install                       wire openark into opencode (plugin shim, agent
+                                files, skills, commands, service venv)
+  version                       print version
 
 Environment:
-  OPENARK_HOME         state root (default ~/.openark)
-  OPENARK_SERVICE_DIR  repo service/ directory (default ./service)
+  OPENARK_HOME            state root (default ~/.openark)
+  OPENARK_SERVICE_DIR     service source checkout (dev installs)
+  OPENCODE_CONFIG_DIR     opencode config dir (default ~/.config/opencode)
 `;
 
 function fail(message: string): never {
@@ -29,13 +34,12 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-function listAgents(): void {
-  const dir = join(openarkHome(), "agents");
-  if (!existsSync(dir)) {
+function listAgentsCmd(): void {
+  const names = listAgents();
+  if (!names.length) {
     console.log("no agents yet — create one with: openark create <name>");
     return;
   }
-  const names = readdirSync(dir).filter((n) => existsSync(agentHome(n)));
   for (const name of names) {
     const manifestPath = join(agentHome(name), "agent.json");
     let description = "";
@@ -49,13 +53,42 @@ function listAgents(): void {
   }
 }
 
-function createAgent(name: string): void {
+function bundledPersonas(): string[] {
+  const dir = join(packageRoot(), "personas");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((name) => existsSync(join(dir, name, "persona.core.md")));
+}
+
+function seedFromPersona(dir: string, name: string, persona: string): void {
+  const source = join(packageRoot(), "personas", persona);
+  const manifest = JSON.parse(readFileSync(join(source, "agent.json"), "utf8"));
+  seedAgentHome(dir, name, manifest.description);
+  for (const file of ["persona.core.md", "persona.evolving.md"]) {
+    const content = readFileSync(join(source, file), "utf8").replace(/^# chiai/m, `# ${name}`);
+    rmSync(join(dir, file));
+    writeFileSync(join(dir, file), content);
+  }
+}
+
+function createAgent(name: string, persona?: string): void {
   if (!/^[a-z][a-z0-9-]*$/.test(name)) {
     fail("agent names are lowercase, may contain digits and hyphens");
   }
+  if (persona) {
+    const available = bundledPersonas();
+    if (!available.includes(persona)) {
+      fail(`unknown persona '${persona}' — bundled: ${available.join(", ") || "(none)"}`);
+    }
+  }
   try {
-    seedAgentHome(agentHome(name), name);
-    console.log(`created agent home: ${agentHome(name)}`);
+    const dir = agentHome(name);
+    if (persona) {
+      seedFromPersona(dir, name, persona);
+    } else {
+      seedAgentHome(dir, name);
+    }
+    console.log(`created agent home: ${dir}`);
+    if (persona) console.log(`seeded persona: ${persona}`);
     console.log("next: edit persona.core.md, then run: openark install");
   } catch (err) {
     fail(String(err));
@@ -70,14 +103,18 @@ function removeAgent(name: string, yes: boolean): void {
   console.log(`deleted ${dir}`);
 }
 
-function startService(): void {
+function servicePython(): string {
+  const homeVenv = venvPython();
+  if (existsSync(homeVenv)) return homeVenv;
   const serviceDir = process.env.OPENARK_SERVICE_DIR ?? join(process.cwd(), "service");
-  if (!existsSync(serviceDir)) {
-    fail(`service directory not found: ${serviceDir} (set OPENARK_SERVICE_DIR)`);
-  }
+  const devVenv = join(serviceDir, ".venv", "bin", "python");
+  if (existsSync(devVenv)) return devVenv;
+  return fail("service venv missing — run: openark install (or `make dev` in a dev checkout)");
+}
+
+function startService(): void {
+  const python = servicePython();
   const config = readGlobalConfig();
-  const python = join(serviceDir, ".venv", "bin", "python");
-  if (!existsSync(python)) fail(`service venv missing — run: make dev (in ${serviceDir})`);
   const child = spawn(
     python,
     [
@@ -100,15 +137,44 @@ async function checkService(): Promise<void> {
   console.log((await client.health()) ? "service: up" : "service: down");
 }
 
+function installCmd(): void {
+  try {
+    const { python, created } = bootstrapVenv({
+      serviceDir: process.env.OPENARK_SERVICE_DIR ?? join(process.cwd(), "service"),
+    });
+    console.log(created ? `bootstrapped service venv: ${python}` : `service venv ready: ${python}`);
+  } catch (err) {
+    console.warn(`warn: venv bootstrap skipped (${String(err)})`);
+  }
+
+  try {
+    const result = installAll();
+    console.log(`plugin shim: ${result.pluginPath}`);
+    console.log(`agent files: ${result.agentFiles.length}`);
+    for (const file of result.agentFiles) console.log(`  ${file}`);
+    console.log(`skill links: ${result.skillLinks.length}`);
+    for (const link of result.skillLinks) console.log(`  ${link}`);
+    console.log(`commands: ${result.commandFiles.length}`);
+    console.log("done — restart opencode to load the plugin");
+  } catch (err) {
+    fail(String(err));
+  }
+}
+
 const [command, ...args] = process.argv.slice(2);
 
 switch (command) {
   case "list":
-    listAgents();
+    listAgentsCmd();
     break;
-  case "create":
-    args[0] ? createAgent(args[0]) : fail("usage: openark create <name>");
+  case "create": {
+    const name = args.find((a) => !a.startsWith("--"));
+    const personaIndex = args.indexOf("--persona");
+    const persona = personaIndex >= 0 ? args[personaIndex + 1] : undefined;
+    if (!name) fail("usage: openark create <name> [--persona chiai]");
+    createAgent(name, persona);
     break;
+  }
   case "rm":
     args[0] ? removeAgent(args[0], args.includes("--yes")) : fail("usage: openark rm <name> --yes");
     break;
@@ -119,8 +185,7 @@ switch (command) {
     await checkService();
     break;
   case "install":
-    console.log("openark install lands in phase 8 — see docs/plans/phases.md");
-    process.exit(2);
+    installCmd();
     break;
   case "version":
     console.log("0.1.0");
