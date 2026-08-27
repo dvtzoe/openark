@@ -594,3 +594,64 @@ suite, not assumed.
   (`...plugin-core.md` #7), untyped `settings` param + stale
   `# type: ignore` in `llm.py` (`...service-core.md` #4 — now unblocked
   since basedpyright landed).
+
+### 2026-08-28 — Tier 3 closed out (items 9–14)
+
+Six commits, each verified independently (full build/lint/test, both
+runtimes where relevant) before committing:
+
+9. **Disambiguated the two `venvPython` functions** →
+   `installedVenvPython` (bootstrap.ts) / `devVenvPython` (lifecycle.ts).
+   `cli.ts`'s `servicePython()` now calls both instead of re-implementing
+   the dev-venv path inline. Found and fixed two more occurrences of the
+   same `process.env.OPENARK_SERVICE_DIR ?? join(process.cwd(),
+   "service")` duplicate in `cli.ts` while already there — switched both
+   to `lifecycle.ts`'s existing `serviceDirFromEnv()`.
+10. **`loadModules` now calls `manifestAllows`** instead of duplicating its
+    predicate inline — kept the tested, named function and gave it a
+    caller rather than deleting it, per the draft fix.
+11. **One shared `require_agent(registry, name) -> Path`** in `agents.py`
+    replaces 5 independent implementations across `lessons.py`,
+    `skills.py`, `channels.py` (identical private copies), `memory.py` (a
+    superset that also returned `agent_home`), and `persona.py` (inlined
+    in `evolve_persona`). Always returns `agent_home` so every caller can
+    use the same function. Also caught `list_lessons`/`list_skills` each
+    calling `registry.agent_home(name)` a second time right after the
+    existence check — now reuse the helper's return value.
+12. **Version string derived, not hand-duplicated**, in the 4 non-source-
+    of-truth spots: Python's `__version__` now reads
+    `importlib.metadata.version("openark-service")` (`app.py`/`health.py`
+    import it); `cli.ts`'s `version` command reads `package.json` via the
+    existing `packageRoot()` helper. `package.json`/`pyproject.toml`
+    remain the two genuine sources of truth.
+13. **Removed a dead cast, kept a load-bearing one.** The
+    `as ModuleContext` cast the audit flagged no longer exists (the
+    runtime.ts session-isolation rewrite already narrows `ctx`). The other
+    flagged cast — `(input.args ?? {}) as Record<string, unknown>` — is
+    genuinely dead too (`unknown | undefined` collapses to `unknown` in
+    TS); removed. While in the area, tried removing `types.ts`'s
+    `session?: { id: string } | undefined` as apparently-redundant too —
+    this one **is** load-bearing (tsconfig's `exactOptionalPropertyTypes`
+    plus `runtime.ts` explicitly assigning `session: undefined`), so it
+    was restored with a comment explaining why, rather than left "fixed."
+    Verified both by actually running `tsc`, not by inspection alone —
+    exactly the methodology the finding itself prescribed for this case.
+14. **`resolve_route`'s `settings` param is now typed** (`Settings |
+    None`), and the `# type: ignore[union-attr]` it needed is gone —
+    confirmed via basedpyright (added in Tier 2) that it's no longer
+    needed rather than just deleting it on faith.
+
+Verified throughout: `npm run build` (tsc), `npx vitest run`, `npx biome
+check`, `uv run basedpyright`, `uv run ruff check .`, `uv run pytest -q`,
+`scripts/check_file_sizes.sh` — all clean before every commit.
+
+- **Next:** Tier 4, the style batch (items 15–23 from the priority order):
+  port default duplicated in 2 TS files; inconsistent silent-catch
+  commenting for `agent.json` description parsing; duplicated
+  bounded-buffer FIFO logic in `memory.ts`/`reflection.ts`; split
+  `import type` statements in 2 module files; undocumented model-routing
+  fallback + missing why-comment in `llm.py`; mixed Pydantic
+  default-value idiom in `models.py`; inconsistent `OSError`/`ValueError`
+  catching in `lessons.py`; stale Mem0 store-cache comment opportunity.
+  This is the last tier — audit phase + all four fix tiers will be
+  complete once it lands.
