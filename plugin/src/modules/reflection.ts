@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { filteredStringArray, requiredString } from "../core/args.js";
 import type { InjectionBlock, ModuleContext, ModuleTool, OpenArkModule } from "../core/types.js";
 import type { ToolResultEvent } from "../core/types.js";
 import type { components } from "../generated/api-types.js";
@@ -6,6 +8,14 @@ type LessonsResponse = components["schemas"]["LessonsResponse"];
 type ReflectResponse = components["schemas"]["ReflectResponse"];
 type LessonRetireResponse = components["schemas"]["LessonRetireResponse"];
 type Lesson = components["schemas"]["Lesson"];
+
+const reflectArgs = z
+  .object({ failures: filteredStringArray(), messages: filteredStringArray() })
+  .refine(
+    (v) => v.failures.length > 0 || v.messages.length > 0,
+    "failures or messages is required",
+  );
+const lessonsRetireArgs = z.object({ id: requiredString("id is required") });
 
 const MAX_BUFFERED = 100;
 
@@ -118,19 +128,14 @@ export const reflectionModule: OpenArkModule = {
           "Reflect on failures and extract durable lessons. Pass each failure as a " +
           "short description in the failures array; optionally pass user correction messages.",
         execute: async (args) => {
-          const failures = Array.isArray(args.failures)
-            ? args.failures
-                .filter((f): f is string => typeof f === "string" && f.trim().length > 0)
-                .map((f) => ({ tool: "manual", ok: false, duration_ms: 0, summary: f }))
-            : [];
-          const messages = Array.isArray(args.messages)
-            ? args.messages.filter((m): m is string => typeof m === "string" && m.trim().length > 0)
-            : [];
-          if (!failures.length && !messages.length) {
-            throw new Error("failures or messages is required");
-          }
+          const { failures, messages } = reflectArgs.parse(args);
           return ctx.service.postJSON<ReflectResponse>(`/v1/agents/${ctx.agent}/lessons/reflect`, {
-            failures,
+            failures: failures.map((f) => ({
+              tool: "manual",
+              ok: false,
+              duration_ms: 0,
+              summary: f,
+            })),
             messages,
           });
         },
@@ -149,8 +154,7 @@ export const reflectionModule: OpenArkModule = {
         name: "lessons_retire",
         description: "Retire a learned lesson by id so it is no longer injected",
         execute: async (args) => {
-          const id = typeof args.id === "string" ? args.id.trim() : "";
-          if (!id) throw new Error("id is required");
+          const { id } = lessonsRetireArgs.parse(args);
           return ctx.service.postJSON<LessonRetireResponse>(
             `/v1/agents/${ctx.agent}/lessons/${id}/retire`,
             {},

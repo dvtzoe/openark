@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { requiredString } from "../core/args.js";
 import type { InjectionBlock, ModuleContext, ModuleTool, OpenArkModule } from "../core/types.js";
 import type { components } from "../generated/api-types.js";
 
@@ -5,6 +7,9 @@ type SkillsResponse = components["schemas"]["SkillsResponse"];
 type DistillResponse = components["schemas"]["DistillResponse"];
 type SkillVerifyResponse = components["schemas"]["SkillVerifyResponse"];
 type Skill = components["schemas"]["SkillSummary"];
+
+const skillDistillArgs = z.object({ trace: requiredString("trace is required") });
+const skillVerifyArgs = z.object({ name: requiredString("name is required") });
 
 export const skillsModule: OpenArkModule = {
   name: "skills",
@@ -42,8 +47,7 @@ export const skillsModule: OpenArkModule = {
           "Distill a successfully completed multi-step workflow into a reusable draft skill. " +
           "Pass the workflow trace (what you did, in order) as the trace argument.",
         execute: async (args) => {
-          const trace = typeof args.trace === "string" ? args.trace.trim() : "";
-          if (!trace) throw new Error("trace is required");
+          const { trace } = skillDistillArgs.parse(args);
           return ctx.service.postJSON<DistillResponse>(`/v1/agents/${ctx.agent}/skills/distill`, {
             trace,
           });
@@ -65,8 +69,7 @@ export const skillsModule: OpenArkModule = {
           "Verify a draft skill by name, promoting it so it is advertised and materialized " +
           "as an opencode skill. Use after one successful reuse or explicit user approval.",
         execute: async (args) => {
-          const slug = typeof args.name === "string" ? args.name.trim() : "";
-          if (!slug) throw new Error("name is required");
+          const { name: slug } = skillVerifyArgs.parse(args);
           return ctx.service.postJSON<SkillVerifyResponse>(
             `/v1/agents/${ctx.agent}/skills/${encodeURIComponent(slug)}/verify`,
             {},

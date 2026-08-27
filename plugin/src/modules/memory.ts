@@ -1,7 +1,18 @@
 import { basename } from "node:path";
+import { z } from "zod";
+import { requiredString } from "../core/args.js";
 import type { InjectionBlock, ModuleContext, ModuleTool, OpenArkModule } from "../core/types.js";
 import type { ToolExecuteContext } from "../core/types.js";
 import type { components } from "../generated/api-types.js";
+
+const memoryAddArgs = z.object({ text: requiredString("text is required") });
+const channelShareArgs = z.object({
+  text: requiredString("text is required"),
+  channel: requiredString("channel is required"),
+  kind: z.unknown().transform((v) => (v === "lesson" ? "lesson" : "memory")),
+});
+const channelItemsArgs = z.object({ channel: requiredString("channel is required") });
+const channelSubscribeArgs = z.object({ channel: requiredString("channel is required") });
 
 type MemoryItem = components["schemas"]["MemoryItem"];
 type RecallResponse = components["schemas"]["MemoryRecallResponse"];
@@ -103,8 +114,7 @@ export const memoryModule: OpenArkModule = {
         name: "memory_add",
         description: "Store a durable fact in this agent's long-term memory",
         execute: async (args, context?: ToolExecuteContext) => {
-          const text = typeof args.text === "string" ? args.text : "";
-          if (!text.trim()) throw new Error("text is required");
+          const { text } = memoryAddArgs.parse(args);
           return ctx.service.postJSON<MutationResponse>(`/v1/agents/${ctx.agent}/memory`, {
             text,
             project: currentProject(context?.directory),
@@ -117,13 +127,9 @@ export const memoryModule: OpenArkModule = {
           "Share a memory or lesson with a channel other agents can subscribe to. " +
           "The user must confirm before pushing. Channel names look like 'team' or '#team'.",
         execute: async (args) => {
-          const text = typeof args.text === "string" ? args.text : "";
-          const channel = typeof args.channel === "string" ? args.channel : "";
-          const kind = args.kind === "lesson" ? "lesson" : "memory";
-          if (!text.trim()) throw new Error("text is required");
-          if (!channel.trim()) throw new Error("channel is required");
+          const { text, channel, kind } = channelShareArgs.parse(args);
           return ctx.service.postJSON<ChannelItem>(
-            `/v1/agents/${ctx.agent}/channels/${encodeURIComponent(channel.trim())}`,
+            `/v1/agents/${ctx.agent}/channels/${encodeURIComponent(channel)}`,
             { text, kind },
           );
         },
@@ -132,22 +138,18 @@ export const memoryModule: OpenArkModule = {
         name: "channel_items",
         description: "List items shared in a channel",
         execute: async (args) => {
-          const channel = typeof args.channel === "string" ? args.channel : "";
-          if (!channel.trim()) throw new Error("channel is required");
-          return ctx.service.getJSON<ChannelItem[]>(
-            `/v1/channels/${encodeURIComponent(channel.trim())}`,
-          );
+          const { channel } = channelItemsArgs.parse(args);
+          return ctx.service.getJSON<ChannelItem[]>(`/v1/channels/${encodeURIComponent(channel)}`);
         },
       },
       {
         name: "channel_subscribe",
         description: "Subscribe (or unsubscribe with subscribe: false) to a channel",
         execute: async (args) => {
-          const channel = typeof args.channel === "string" ? args.channel : "";
-          if (!channel.trim()) throw new Error("channel is required");
+          const { channel } = channelSubscribeArgs.parse(args);
           const action = args.subscribe === false ? "unsubscribe" : "subscribe";
           return ctx.service.postJSON<string[]>(
-            `/v1/agents/${ctx.agent}/channels/${encodeURIComponent(channel.trim())}/${action}`,
+            `/v1/agents/${ctx.agent}/channels/${encodeURIComponent(channel)}/${action}`,
             {},
           );
         },
