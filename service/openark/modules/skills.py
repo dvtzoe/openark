@@ -103,7 +103,16 @@ class SkillsModule:
         return {"verified": True, "reason": None}
 
     def _read(self, path: Path, status: str) -> SkillFile | None:
-        frontmatter, _ = _split_frontmatter(path.read_text())
+        try:
+            content = path.read_text()
+        except OSError as err:
+            # One unreadable skill file (races with a concurrent write,
+            # permissions, disk error) must not break listing every other
+            # skill — same resilience shape as channels.py's per-line
+            # try/except.
+            logger.warning("skipping skill file %s: %s", path, err)
+            return None
+        frontmatter, _ = _split_frontmatter(content)
         name = frontmatter.get("name")
         description = frontmatter.get("description")
         if not name or not description:

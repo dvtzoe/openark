@@ -144,6 +144,21 @@ def test_verify_twice_conflicts(registry):
     assert result["reason"] == "not-found"
 
 
+def test_list_skips_unreadable_skill_file(registry):
+    module = make_module(FakeRunner())
+    module.distill(registry, "defoko", "trace one")
+    module.verify(registry, "defoko", "release-checklist")
+
+    home = registry.agent_home("defoko")
+    broken_dir = home / "skills" / "broken"
+    broken_dir.mkdir()
+    broken_path = broken_dir / "SKILL.md"
+    broken_path.mkdir()  # a directory where a file is expected -> read_text() raises OSError
+
+    verified = module.list(home)
+    assert [s.name for s in verified] == ["release-checklist"]
+
+
 def test_compositional_prompt_lists_existing_skills(registry):
     module = make_module(FakeRunner())
     module.distill(registry, "defoko", "trace one")

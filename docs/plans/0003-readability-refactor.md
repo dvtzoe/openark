@@ -400,3 +400,41 @@ Newest entry last. Each entry: date, what was done, what's next.
   in `modules/skills.py`, `channels.py`'s `read_channel` in
   `api/v1/channels.py`) — then Tier 1 item 5 (`MemoryModule.add` missing
   the error handling `ingest()` has), closing out Tier 1.
+
+### 2026-08-28 — Tier 1 #3: the "one corrupted file" pattern, fixed consistently across all 3 occurrences
+
+- `core/registry.py`: `AgentRegistry.list()` now skips (logs a warning,
+  keeps going) an agent whose `agent.json` fails to parse
+  (`json.JSONDecodeError`) or validate (`pydantic.ValidationError`),
+  instead of letting either propagate and 500 the whole `/v1/agents`
+  endpoint. Bundled the atomic-write half of the same finding while in
+  this file (it was the same root problem, per the finding's own framing):
+  added `_atomic_write_text` (temp file in the same dir + `os.replace`)
+  and switched `save_manifest`/`create()`'s `agent.json` write to use it,
+  so a crash mid-write can no longer produce the torn file that trips the
+  bug in the first place.
+- `modules/skills.py`: `SkillsModule._read` now catches `OSError` around
+  the file read (a directory-shaped `SKILL.md`, a permissions error, a
+  race with a concurrent write) and skips that one skill instead of
+  breaking `list()` for every skill in the agent — matching the
+  try/except-and-skip shape `channels.py` already used for malformed JSONL
+  lines, per the finding's explicit "copy this pattern, don't invent a new
+  one."
+  - `api/v1/channels.py`: `read_channel` now catches
+  `pydantic.ValidationError` per item (a channel line that parsed as valid
+  JSON but is missing a field `ChannelItem` requires) and skips just that
+  item, logging a warning, instead of 500ing the whole channel read.
+- Added `service/tests/test_registry.py` (didn't exist before — owner
+  approved expanding coverage): corrupted-JSON skip, failed-validation
+  skip, all-valid passthrough, atomic-write round-trip (no leftover `.tmp`
+  file), and the pre-existing `AgentNotFound` behavior. Added a
+  skills-module test (`test_list_skips_unreadable_skill_file`, using a
+  directory in place of the expected file to force a real `OSError`) and
+  an API-level test (`test_read_channel_skips_malformed_items`, hand-
+  writing a JSONL line missing `source_agent`).
+- Verified: `uv run pytest -q` (109/109 passing — this run took ~3m15s,
+  mostly mem0/chromadb import cost, not the new tests), `uv run ruff check
+  .` (clean), `scripts/check_file_sizes.sh` (clean).
+- **Next:** Tier 1 item 5 — `MemoryModule.add` missing the error handling
+  its sibling `ingest()` has (`service/openark/modules/memory.py`) — the
+  last Tier 1 item, then Tier 2 (adding basedpyright to the toolchain).

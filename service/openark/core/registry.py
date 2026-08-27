@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import shutil
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from ..core.models import AgentManifest
+
+logger = logging.getLogger(__name__)
 
 BUNDLED_PERSONAS = Path(__file__).parent.parent / "personas"
 
@@ -34,6 +41,20 @@ LESSONS_TEMPLATE = """# Lessons
 Rules this agent learned from failures and corrections.
 Format: "- [status] rule (source: X, hits: N, stale: M)" — managed by openark.
 """
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    # write-to-temp-then-rename so a crash or kill mid-write can't leave a
+    # torn agent.json for list()/get() to trip over later (os.replace is
+    # atomic on the same filesystem, which the temp file is by construction).
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(content)
+        os.replace(tmp_name, path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
 
 
 class AgentNotFound(KeyError):
@@ -67,12 +88,19 @@ class AgentRegistry:
         return (self.agent_home(name) / "agent.json").exists()
 
     def list(self) -> list[AgentManifest]:
+        # One agent with a corrupted agent.json must not take the rest of
+        # the list down with it (ADR 0004: "one polluted agent cannot
+        # poison everyone") — skip and log rather than propagating.
         manifests = []
         if not self.agents_dir.exists():
             return manifests
         for entry in sorted(self.agents_dir.iterdir()):
-            if (entry / "agent.json").exists():
+            if not (entry / "agent.json").exists():
+                continue
+            try:
                 manifests.append(self.get(entry.name))
+            except (json.JSONDecodeError, ValidationError) as err:
+                logger.warning("skipping agent %r: corrupted agent.json (%s)", entry.name, err)
         return manifests
 
     def get(self, name: str) -> AgentManifest:
@@ -86,7 +114,7 @@ class AgentRegistry:
         path = self.agent_home(manifest.name) / "agent.json"
         if not path.exists():
             raise AgentNotFound(manifest.name)
-        path.write_text(json.dumps(manifest.model_dump(), indent=2) + "\n")
+        _atomic_write_text(path, json.dumps(manifest.model_dump(), indent=2) + "\n")
 
     def bundled_personas(self) -> list[str]:
         if not BUNDLED_PERSONAS.exists():
@@ -115,7 +143,7 @@ class AgentRegistry:
         )
         for sub in ("skills", "data", "logs"):
             (home / sub).mkdir(parents=True)
-        (home / "agent.json").write_text(json.dumps(manifest.model_dump(), indent=2) + "\n")
+        _atomic_write_text(home / "agent.json", json.dumps(manifest.model_dump(), indent=2) + "\n")
         if persona:
             source = BUNDLED_PERSONAS / persona
             (home / "persona.core.md").write_text((source / "persona.core.md").read_text())

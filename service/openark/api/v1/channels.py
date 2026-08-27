@@ -1,8 +1,13 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import ValidationError
 
 from ...core.models import ChannelItem, ChannelPushRequest
 from ...core.registry import AgentNotFound, AgentRegistry
 from .agents import get_registry
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["channels"])
 
@@ -24,7 +29,18 @@ def read_channel(channel: str, store=Depends(get_channels_store)):
         items = store.list_channel(channel)
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
-    return [ChannelItem(**item) for item in items]
+    result = []
+    for item in items:
+        try:
+            result.append(ChannelItem(**item))
+        except ValidationError as err:
+            # Same "one bad item can't break the whole list" shape as
+            # AgentRegistry.list() and SkillsModule.list() — a line that
+            # parsed as valid JSON but is missing a required field is
+            # still just one corrupted item, not a reason to 500 the
+            # whole channel.
+            logger.warning("skipping malformed item in channel #%s: %s", channel, err)
+    return result
 
 
 @router.post("/agents/{name}/channels/{channel}", response_model=ChannelItem, status_code=201)

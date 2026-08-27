@@ -322,6 +322,28 @@ def test_channels_and_recall_merge(client, fake_memory):
     assert client.post("/v1/agents/ghost/channels/team", json={"text": "x"}).status_code == 404
 
 
+def test_read_channel_skips_malformed_items(client):
+    from openark.modules.channels import ChannelsStore
+
+    client.post("/v1/agents", json={"name": "defoko"})
+    store = ChannelsStore(client.app.state.registry.root)
+    client.app.state.modules["channels"] = store
+
+    client.post("/v1/agents/defoko/channels/team", json={"text": "good item"})
+    # A line that parses as valid JSON but is missing a field ChannelItem
+    # requires (source_agent) — the same shape a corrupted/edited-by-hand
+    # jsonl entry could take.
+    items_path = store._items_path("team")
+    with items_path.open("a") as fh:
+        fh.write('{"id": "bad1", "text": "missing source_agent", "kind": "memory"}\n')
+    client.post("/v1/agents/defoko/channels/team", json={"text": "another good item"})
+
+    res = client.get("/v1/channels/team")
+    assert res.status_code == 200
+    texts = [item["text"] for item in res.json()]
+    assert texts == ["good item", "another good item"]
+
+
 def test_openapi_contract_stable(client):
     res = client.get("/openapi.json")
     assert res.status_code == 200
