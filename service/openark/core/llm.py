@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from .config import ExplicitRoute, InheritRoute, ModelRoute, get_settings
+from .config import ExplicitRoute, InheritRoute, ModelRoute, Settings, get_settings
 
 PROVIDERS: dict[str, dict[str, str | None]] = {
     "openai": {
@@ -157,11 +157,11 @@ def _provider_key_env(provider: str) -> str | None:
 
 def resolve_route(
     task: str,
-    settings=None,
+    settings: Settings | None = None,
     opencode_config: dict[str, Any] | None = None,
     auth: dict[str, str] | None = None,
 ) -> ResolvedModel | None:
-    route: ModelRoute | None = (settings or get_settings()).models.get(task)  # type: ignore[union-attr]
+    route: ModelRoute | None = (settings or get_settings()).models.get(task)
     if route is None:
         route = InheritRoute(inherit="small")
     if isinstance(route, InheritRoute):
