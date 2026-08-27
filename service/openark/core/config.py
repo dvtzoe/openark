@@ -25,6 +25,9 @@ TASKS = ("extraction", "reflection", "distillation", "persona_update", "embeddin
 
 class Settings(BaseModel):
     root: Path
+    # Mirrored by plugin/src/core/config.ts's DEFAULT_SERVICE_PORT — no
+    # shared constant is possible across the TS/Python boundary, so this
+    # must be kept in sync by hand if it ever changes.
     service_port: int = 8765
     models: dict[str, ModelRoute] = {}
 

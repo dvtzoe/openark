@@ -3,6 +3,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { GlobalConfig } from "./types.js";
 
+// Mirrored by core/config.py's own `service_port: int = 8765` default on
+// the Python side — that copy is unavoidable (no shared constant is
+// possible across the TS/Python boundary) and must be kept in sync by
+// hand if this ever changes.
+export const DEFAULT_SERVICE_PORT = 8765;
+
 export function openarkHome(): string {
   return process.env.OPENARK_HOME ?? join(homedir(), ".openark");
 }
@@ -12,7 +18,7 @@ export function agentHome(agent: string, home: string = openarkHome()): string {
 }
 
 export function readGlobalConfig(home: string = openarkHome()): GlobalConfig {
-  const defaults: GlobalConfig = { servicePort: 8765, models: {} };
+  const defaults: GlobalConfig = { servicePort: DEFAULT_SERVICE_PORT, models: {} };
   const path = join(home, "openark.json");
   if (!existsSync(path)) return defaults;
   try {

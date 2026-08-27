@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { DEFAULT_SERVICE_PORT } from "./config.js";
 import type { ServiceClient } from "./service.js";
 
 const HEALTH_TIMEOUT_MS = 20000;
@@ -39,7 +40,7 @@ export function spawnService(options: SpawnOptions = {}): ReturnType<typeof spaw
   const dir = options.serviceDir ?? serviceDirFromEnv();
   const python = options.pythonBin ?? devVenvPython(dir);
   if (!existsSync(python)) return null;
-  const port = options.port ?? 8765;
+  const port = options.port ?? DEFAULT_SERVICE_PORT;
   const child = spawn(
     python,
     ["-m", "uvicorn", "openark.app:app", "--host", "127.0.0.1", "--port", String(port)],
