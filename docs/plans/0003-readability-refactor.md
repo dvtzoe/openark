@@ -57,20 +57,22 @@ Status legend: `[ ]` not started · `[~]` audited, fix not yet applied ·
 since core types/contracts are what everything else depends on (fixing a
 shared type once beats fixing five call sites separately):
 
-- [~] **Plugin core** — `plugin/src/core/{types,config,service,loader,
+- [x] **Plugin core** — `plugin/src/core/{types,config,service,loader,
       lifecycle,runtime,hooks,bootstrap,agent-template,installer,doctor}.ts`
-      — audited (findings in `0003-findings-plugin-core.md`), not yet fixed
-- [~] **Plugin modules** — `plugin/src/modules/{memory,personality,
+      — audited (findings in `0003-findings-plugin-core.md`), all findings
+      fixed
+- [x] **Plugin modules** — `plugin/src/modules/{memory,personality,
       reflection,skills,index}.ts`, `plugin/src/index.ts`, `plugin/src/cli.ts`
-      — audited (findings in `0003-findings-plugin-modules.md`), not yet fixed
-- [~] **Service core** — `service/openark/core/{config,models,registry,llm,
+      — audited (findings in `0003-findings-plugin-modules.md`), all
+      findings fixed
+- [x] **Service core** — `service/openark/core/{config,models,registry,llm,
       prompts}.py`, `service/openark/app.py` — audited (findings in
-      `0003-findings-service-core.md`), not yet fixed
-- [~] **Service modules** — `service/openark/modules/{base,memory,persona,
+      `0003-findings-service-core.md`), all findings fixed
+- [x] **Service modules** — `service/openark/modules/{base,memory,persona,
       lessons,skills,channels}.py` — audited (findings in
-      `0003-findings-service-modules.md`), not yet fixed
-- [~] **Service API layer** — `service/openark/api/v1/*.py` — audited
-      (findings in `0003-findings-service-api.md`), not yet fixed
+      `0003-findings-service-modules.md`), all findings fixed
+- [x] **Service API layer** — `service/openark/api/v1/*.py` — audited
+      (findings in `0003-findings-service-api.md`), all findings fixed
 - [x] **Cross-cutting** — error handling, type-safety, comments, and
       doc-vs-code drift were checked as part of each area above rather than
       as a separate pass (each findings doc calls out which category a
@@ -655,3 +657,71 @@ check`, `uv run basedpyright`, `uv run ruff check .`, `uv run pytest -q`,
   catching in `lessons.py`; stale Mem0 store-cache comment opportunity.
   This is the last tier — audit phase + all four fix tiers will be
   complete once it lands.
+
+### 2026-08-28 — Tier 4 closed out; all 23 audit findings fixed
+
+Nine commits (items 15–23), each verified independently:
+
+15. `DEFAULT_SERVICE_PORT` extracted in `config.ts`, used by
+    `lifecycle.ts` instead of a second `8765` literal; added the
+    cross-language sync comment next to Python's own independent default
+    (that one genuinely can't share a constant across the TS/Python
+    boundary).
+16. `cli.ts`'s `listAgentsCmd` now calls `installer.ts`'s
+    `readAgentDescription` instead of re-parsing `agent.json` with a bare,
+    uncommented `catch {}` — one correctly-commented implementation
+    instead of two, one of which explained itself and one of which didn't.
+17. Already resolved in Tier 3 (item 13) — the `| undefined` in
+    `types.ts` turned out load-bearing under `exactOptionalPropertyTypes`,
+    not redundant; kept with a comment rather than "fixed."
+18. Extracted `pushBounded(buffer, item, max)` (with its own direct
+    tests) instead of the same "if full, shift; then push" logic
+    hand-rolled 3x across `memory.ts`'s transcript and `reflection.ts`'s
+    failures/messages buffers.
+19. Merged the two split `import type { ... } from "../core/types.js"`
+    statements into one in both `memory.ts` and `reflection.ts`.
+20. Added the why-comment `resolve_route` was missing (a task with no
+    `openark.json` entry defaults to inheriting opencode's small model
+    before giving up, not straight to "no route") and updated
+    `DESIGN.md`'s model-routing section to match — the docs and the code
+    each told a different, incomplete story on their own.
+21. Standardized `models.py` on `Field(default_factory=list)` throughout
+    (was mixed with bare `= []` — both are safe in Pydantic v2, but
+    inconsistently spelling the same thing invites a reader to suspect a
+    bug that isn't there).
+22. `lessons.py`'s `_load_state` now catches `(ValueError, OSError)`,
+    matching `config.py`'s existing precedent for "read a JSON file,
+    degrade safely" — it was only catching `ValueError`.
+23. Documented why `Mem0StoreFactory` caches one store per agent forever
+    (reasonable performance tradeoff, not a bug) and what the operator
+    needs to do (restart the service) for a routing change to actually
+    take effect — the same shape as the plugin-side manifest-caching
+    issue, independently found on the service side.
+
+Verified throughout: `npm run build`, `npx vitest run`, `npx biome
+check`, `uv run basedpyright`, `uv run ruff check .`, `uv run pytest -q`,
+`scripts/check_file_sizes.sh`.
+
+**Final full-repo check** (not just per-commit): `make lint` and `make
+test` both green end-to-end — 120 plugin tests (vitest), 110 service
+tests (pytest), biome/ruff/basedpyright all clean, file-size cap holds.
+
+**All 23 findings from the audit phase are now fixed.** Scope map above
+updated to `[x]` for all five areas. This closes out Plan 0003's fix
+phase as originally scoped (`docs/plans/0003-findings-*.md`, synthesized
+into the four-tier priority order above).
+
+What this plan did *not* cover, and would be reasonable follow-up if the
+owner wants to keep going: the codebase-wide readability *rewrite* implied
+by the owner's original ask (re-reading every file fresh against
+`READABILITY.md` §1–8 for issues the targeted audit didn't happen to
+surface, since the audit was scoped to "find concrete problems," not
+"read every line") — the audit + 23 fixes covered everything the audit
+pass actually found, module by module, but wasn't a line-by-line
+re-review of files with zero findings (e.g. `core/prompts.py`,
+`agent-template.ts`) on the theory that no findings there means they
+already read fine. If the owner wants that deeper pass, or wants to
+ratchet basedpyright from `standard` toward a stricter mode now that the
+codebase is clean under `standard`, those are natural next plans — worth
+a fresh `docs/plans/0004-*.md` rather than folding into this one, since
+Plan 0003 was scoped and is now complete.
