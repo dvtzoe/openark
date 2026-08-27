@@ -66,8 +66,9 @@ shared type once beats fixing five call sites separately):
 - [~] **Service core** — `service/openark/core/{config,models,registry,llm,
       prompts}.py`, `service/openark/app.py` — audited (findings in
       `0003-findings-service-core.md`), not yet fixed
-- [ ] **Service modules** — `service/openark/modules/{base,memory,persona,
-      lessons,skills,channels}.py`
+- [~] **Service modules** — `service/openark/modules/{base,memory,persona,
+      lessons,skills,channels}.py` — audited (findings in
+      `0003-findings-service-modules.md`), not yet fixed
 - [ ] **Service API layer** — `service/openark/api/v1/*.py`
 - [ ] **Cross-cutting** — error handling audit, type-safety audit
       (`Any`/`unknown`/untyped dict usage), comment audit, doc-vs-code drift
@@ -91,6 +92,13 @@ files, linked here as they're written:
   Python type checker configured anywhere** (type hints unenforced), one
   corrupted `agent.json` can 500 the whole agent-list endpoint, an
   undocumented model-routing fallback, a stale `type: ignore`
+- [0003-findings-service-modules.md](0003-findings-service-modules.md) —
+  modules return raw dicts instead of the typed Pydantic response models
+  already defined for them (validated only at the outermost API layer,
+  a call away from where the dict is built), an error-handling
+  inconsistency between `MemoryModule.add`/`ingest`, and the same
+  "one corrupted file breaks the whole list" shape as service-core #2,
+  found again in `SkillsModule.list`
 
 ## Log
 
@@ -161,3 +169,33 @@ Newest entry last. Each entry: date, what was done, what's next.
   respects for the single-agent-load case).
 - **Next:** audit `service/openark/modules/{base,memory,persona,lessons,
   skills,channels}.py`.
+
+### 2026-08-28 — Service modules audit
+
+- Audited all six files in `service/openark/modules/`. Findings in
+  `0003-findings-service-modules.md`. These are well-decomposed overall
+  (small pure helpers, dataclasses for parsed file state) — findings are
+  real, targeted gaps, not a rewrite verdict.
+- Biggest one: every module method builds and returns a raw `dict[str,
+  Any]`, even though `core/models.py` already defines the exact Pydantic
+  response shape for each of them — confirmed by reading `api/v1/persona.py`
+  and `api/v1/lessons.py`, where *every* endpoint re-wraps the module's dict
+  into the real response model on its last line. The type contract exists
+  but is enforced one call away from where the data is actually built, so
+  module-level unit tests (required per module by `CONTRIBUTING.md`) can't
+  catch a shape mismatch the way they could against a real typed return.
+  Also found the same "one corrupted file breaks listing everything" shape
+  from `0003-findings-service-core.md` #2 recurring in
+  `SkillsModule.list`/`_read` — and a good existing counter-example already
+  in the codebase (`channels.py`'s per-line try/except) that both should be
+  made consistent with, rather than inventing a new pattern.
+- **Next:** audit `service/openark/api/v1/*.py` (the versioned REST
+  contract layer) — check each endpoint against its module + against
+  `MODULE_SPEC.md`'s "modules never import each other; cross-module
+  composition happens in the API layer" rule, and reconcile with findings
+  already surfaced from reading `persona.py`/`lessons.py` above (already
+  read during the modules pass; still need `agents.py` cross-checked
+  against `0003-findings-service-core.md` #2, plus `memory.py`, `skills.py`,
+  `channels.py`, `health.py`, `router.py`). After that, the audit phase is
+  complete and findings should be summarized for owner review before any
+  fixing starts, per the agreed process.
