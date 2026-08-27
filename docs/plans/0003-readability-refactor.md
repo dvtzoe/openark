@@ -69,10 +69,13 @@ shared type once beats fixing five call sites separately):
 - [~] **Service modules** — `service/openark/modules/{base,memory,persona,
       lessons,skills,channels}.py` — audited (findings in
       `0003-findings-service-modules.md`), not yet fixed
-- [ ] **Service API layer** — `service/openark/api/v1/*.py`
-- [ ] **Cross-cutting** — error handling audit, type-safety audit
-      (`Any`/`unknown`/untyped dict usage), comment audit, doc-vs-code drift
-      list
+- [~] **Service API layer** — `service/openark/api/v1/*.py` — audited
+      (findings in `0003-findings-service-api.md`), not yet fixed
+- [x] **Cross-cutting** — error handling, type-safety, comments, and
+      doc-vs-code drift were checked as part of each area above rather than
+      as a separate pass (each findings doc calls out which category a
+      finding belongs to). See "Priority order for fixing" below for the
+      cross-area synthesis.
 
 `plugin/src/generated/api-types.ts` is generated (OpenAPI → TS) — out of
 scope for hand-editing; if its *shape* needs to change, that's a service API
@@ -99,6 +102,75 @@ files, linked here as they're written:
   inconsistency between `MemoryModule.add`/`ingest`, and the same
   "one corrupted file breaks the whole list" shape as service-core #2,
   found again in `SkillsModule.list`
+- [0003-findings-service-api.md](0003-findings-service-api.md) — the same
+  "look up agent, 404 if missing" check implemented 5 different ways
+  across 5 files, a 3rd occurrence of the "one corrupted item breaks the
+  whole list" pattern, an untyped `app.state.modules` dict feeding
+  `Any`-typed module lookups everywhere, and the version string hardcoded
+  independently in 6 places across both runtimes
+
+## Priority order for fixing
+
+Synthesized across all five findings docs once the audit phase finished
+(2026-08-28). This is a recommendation, not a decision — **awaiting owner
+review before any fixing starts**, per the agreed process. 23 findings
+total across 5 docs.
+
+**Tier 1 — correctness/robustness (fix first; these are real bugs, not
+style):**
+
+1. Cross-agent/cross-session buffer leak in `memory.ts`/`reflection.ts`
+   (`0003-findings-plugin-modules.md` #1) — highest priority, touches data
+   privacy between agents.
+2. No timeout on `getJSON`/`postJSON` — a hung service can hang a session
+   (`0003-findings-plugin-core.md` #1).
+3. The "one corrupted file breaks listing everything" pattern — 3
+   occurrences, fix consistently in one pass
+   (`0003-findings-service-core.md` #2, `0003-findings-service-modules.md`
+   #3, `0003-findings-service-api.md` #2).
+4. Manifest caching contradicts documented "toggle at any time" behavior
+   (`0003-findings-plugin-core.md` #2) — do together with #1 above, both
+   touch `runtime.ts`.
+5. `MemoryModule.add` missing the error handling its sibling `ingest()` has
+   (`0003-findings-service-modules.md` #2).
+
+**Tier 2 — type-safety infrastructure (high leverage, do before the type
+fixes that depend on them):**
+
+6. Add a Python type checker to the toolchain — nothing else Python-side
+   type-safety-related can be verified without this
+   (`0003-findings-service-core.md` #1). Do this **before** #7 and #14.
+7. Modules return raw dicts instead of the typed response models already
+   defined for them; `app.state.modules` is an untyped dict feeding
+   `Any`-typed lookups everywhere — related, same root cause, fix together
+   (`0003-findings-service-modules.md` #1, `0003-findings-service-api.md`
+   #3).
+8. ~15 call sites hand-validate tool args instead of zod schemas
+   (`0003-findings-plugin-modules.md` #2).
+
+**Tier 3 — readability/consistency (safe, mechanical, low risk):**
+
+9. Duplicate-named `venvPython` functions (`0003-findings-plugin-core.md`
+   #3). 10. Dead code `manifestAllows` (`...plugin-core.md` #4). 11.
+   Duplicated `_require_agent` across 5 API files (`...service-api.md` #1).
+   12. Version string hardcoded in 6 places (`...service-api.md` #4). 13.
+   Unnecessary `as ModuleContext` cast(s) (`...plugin-core.md` #7). 14.
+   Untyped `settings` param + stale `type: ignore` in `llm.py`
+   (`...service-core.md` #4, do after #6).
+
+**Tier 4 — style batch (bundle into one or two cleanup commits):**
+
+15. Port default duplicated in 2 TS files. 16. Inconsistent silent-catch
+    commenting for agent.json description parsing. 17. Redundant `|
+    undefined` in `types.ts`. 18. Duplicated bounded-buffer FIFO logic
+    (fix alongside #1). 19. Split `import type` statements in 2 module
+    files. 20. Undocumented model-routing fallback + missing why-comment.
+    21. Mixed Pydantic default-value idiom in `models.py`. 22. Inconsistent
+    `OSError`/`ValueError` catching in `lessons.py`. 23. Stale Mem0
+    store-cache comment opportunity.
+
+(15–23 map to the remaining minor findings in each doc, referenced there by
+number.)
 
 ## Log
 
@@ -199,3 +271,30 @@ Newest entry last. Each entry: date, what was done, what's next.
   `channels.py`, `health.py`, `router.py`). After that, the audit phase is
   complete and findings should be summarized for owner review before any
   fixing starts, per the agreed process.
+
+### 2026-08-28 — Service API layer audit; audit phase complete
+
+- Audited all of `service/openark/api/v1/*.py`. Findings in
+  `0003-findings-service-api.md`. Confirmed (by grep) that `MODULE_SPEC.md`'s
+  "modules never import each other" rule is genuinely respected — zero
+  cross-module imports anywhere in `service/openark/modules/`.
+- Found the same "look up agent, 404 if missing" logic implemented 5
+  different ways across 5 files (3 identical private copies, 1 superset
+  version, 1 inlined-without-a-helper) — a clean, low-risk, mechanical
+  consolidation.
+- Found a 3rd occurrence of the "one corrupted item breaks the whole list"
+  pattern (in `channels.py`'s `read_channel`), confirming it's systemic
+  (3 occurrences across 2 layers) rather than 3 unrelated one-offs — should
+  be fixed consistently in one pass, not patched separately.
+- Found the version string hardcoded independently in 6 places across both
+  runtimes (only 2 of the 6 should be sources of truth).
+- **Audit phase is done.** 23 findings total across 5 docs. Wrote a
+  cross-area "Priority order for fixing" section above, synthesizing all
+  five findings docs into four tiers (correctness/robustness first, then
+  type-safety infrastructure, then mechanical readability fixes, then a
+  style batch). **Stopping here for owner review, per the agreed process —
+  no fixes have been applied yet.** Whoever resumes this (owner or a future
+  session): start by reading the priority order above, confirm/adjust it,
+  then begin with Tier 1 item 1 (or wherever the owner redirects), one
+  commit per verified fix (`make test && make lint` green before each
+  commit), updating this log after every step.
