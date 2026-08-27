@@ -30,7 +30,7 @@ def memory_dependencies_installed() -> bool:
 
 class MemoryStore(Protocol):
     def add(
-        self, agent: str, text: str, metadata: dict[str, Any], infer: bool
+        self, agent: str, text: str | list[str], metadata: dict[str, Any], infer: bool
     ) -> dict[str, Any] | None: ...
 
     def search(self, agent: str, query: str, limit: int) -> list[dict[str, Any]]: ...

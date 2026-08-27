@@ -26,7 +26,7 @@ plugin-lint:
 	cd $(PLUGIN_DIR) && npx biome check src tests
 
 service-lint:
-	cd $(SERVICE_DIR) && uv run ruff check .
+	cd $(SERVICE_DIR) && uv run ruff check . && uv run basedpyright
 
 test: plugin-test service-test ## run all tests
 

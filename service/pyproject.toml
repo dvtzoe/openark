@@ -17,6 +17,7 @@ memory = [
   "fastembed>=0.4",
 ]
 dev = [
+  "basedpyright>=1.39",
   "httpx>=0.27",
   "pytest>=8.3",
   "ruff>=0.8",
@@ -41,3 +42,16 @@ extend-immutable-calls = ["fastapi.Depends"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.basedpyright]
+include = ["openark"]
+pythonVersion = "3.11"
+# "standard" (pyright-compatible) rather than basedpyright's own stricter
+# "all" default: this catches real type errors (wrong argument types,
+# missing generic args) without also demanding full annotation coverage
+# and zero `Any` across a codebase that mixes in untyped third-party libs
+# (mem0, chromadb). Ratcheting up to a stricter mode is future work, not a
+# blocker for having a type checker in the loop at all — see
+# docs/plans/0003-findings-service-core.md #1.
+typeCheckingMode = "standard"
+reportMissingTypeStubs = false

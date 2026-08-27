@@ -48,4 +48,5 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: pip install -e ".[dev,memory]"
       - run: ruff check .
+      - run: basedpyright
       - run: pytest -q

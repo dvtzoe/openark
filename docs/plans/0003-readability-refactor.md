@@ -462,3 +462,43 @@ Newest entry last. Each entry: date, what was done, what's next.
   #1), wired into `make lint` and CI, *before* touching #7 (modules
   returning raw dicts instead of typed models) or #14 (untyped `settings`
   param), per the priority order's own sequencing note.
+
+### 2026-08-28 — Tier 2 #6: basedpyright added to the toolchain
+
+- Installed basedpyright standalone first to see actual scope before
+  deciding how to wire it in (per the finding's own instruction: "run it
+  once added and use its actual output to drive the cleanup pass, rather
+  than guessing"). basedpyright's own default preset (its "all rules on"
+  strict mode, stricter than plain pyright even at the same
+  `typeCheckingMode` name) produced **434 warnings, 8 errors** — almost
+  entirely `reportAny`/`reportExplicitAny`/`reportUnannotatedClassAttribute`/
+  `reportUnusedCallResult` noise from a codebase that intentionally uses
+  `dict[str, Any]` at module boundaries and untyped third-party libs
+  (mem0, chromadb) — not the "maximum type safety, catch real bugs" signal
+  the owner actually wants from *adding a checker*.
+- Configured `[tool.basedpyright]` in `pyproject.toml` with
+  `typeCheckingMode = "standard"` (pyright-compatible, not basedpyright's
+  stricter default) — this is a **deliberate, documented scope choice**:
+  it catches real type errors without demanding full annotation coverage
+  in one sitting. Re-ratcheting to a stricter mode is legitimate future
+  work, not a blocker for having a type checker in the loop at all. Under
+  `standard`, the same codebase drops to **1 real error**.
+- That one error was a genuine bug, not noise: `MemoryModule`'s
+  `MemoryStore` Protocol declared `add(..., text: str, ...)`, but
+  `ingest()` already (correctly, per existing tests) calls it with
+  `text: list[str]` — the real Mem0-backed store and the `FakeStore` in
+  tests both already handle a list; only the Protocol's declared type was
+  too narrow to describe actual usage. Widened it to `text: str |
+  list[str]`, which is the fix, not a workaround — now a future caller
+  passing the wrong shape will actually be caught.
+- Wired into `make lint` (`service-lint` now runs `ruff check .` then
+  `basedpyright`) and CI (`.github/workflows/ci.yml`'s `service` job, as a
+  step between `ruff check` and `pytest`).
+- Verified: `uv run ruff check .` (clean), `uv run basedpyright` (0
+  errors), `uv run pytest -q` (in progress at time of writing — to
+  confirm before committing), `scripts/check_file_sizes.sh`.
+- **Next:** Tier 2 #7 — modules returning raw dicts instead of the typed
+  Pydantic response models already defined for them, and the untyped
+  `app.state.modules` dict feeding `Any`-typed lookups everywhere. Now
+  that basedpyright is wired in, this fix can be verified by the type
+  checker itself, not just by reading.
