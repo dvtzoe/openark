@@ -98,6 +98,13 @@ def test_add_with_unavailable_route_uses_infer_false():
     assert store.adds[0]["infer"] is False
 
 
+def test_add_store_write_error_degrades_to_none():
+    store = FakeStore()
+    store.add = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))  # type: ignore[assignment]
+    module = make_module(store, runner=FakeRunner())
+    assert module.add(HOME, "defoko", "likes neovim") is None
+
+
 def test_ingest_with_unavailable_route_is_noop():
     store = FakeStore()
     runner = FakeRunner(available=False)

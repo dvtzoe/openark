@@ -174,7 +174,15 @@ class MemoryModule:
         if project:
             metadata["project"] = project
         infer = self._llm_available()
-        return store.add(agent, text, metadata, infer=infer)
+        try:
+            return store.add(agent, text, metadata, infer=infer)
+        except Exception as err:
+            # Same degrade-to-no-op contract as ingest()'s store.add() call
+            # below: api/v1/memory.py's add_memory already treats a None
+            # result as a 502, so this fits the existing return contract
+            # without needing a new error shape.
+            logger.warning("memory add write failed for %s: %s", agent, err)
+            return None
 
     def ingest(
         self, agent_home: Path, agent: str, conversation: str, project: str | None = None

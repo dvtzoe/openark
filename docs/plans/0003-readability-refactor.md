@@ -438,3 +438,27 @@ Newest entry last. Each entry: date, what was done, what's next.
 - **Next:** Tier 1 item 5 — `MemoryModule.add` missing the error handling
   its sibling `ingest()` has (`service/openark/modules/memory.py`) — the
   last Tier 1 item, then Tier 2 (adding basedpyright to the toolchain).
+
+### 2026-08-28 — Tier 1 #5: MemoryModule.add now degrades like ingest() does; Tier 1 closed out
+
+- `MemoryModule.add` wraps its `store.add(...)` call in `try/except
+  Exception`, logs, and returns `None` — matching `ingest()`'s existing
+  degrade shape. Checked `api/v1/memory.py`'s `add_memory` first (per the
+  finding's own note that this hadn't been read yet): it already treats a
+  `None` result as a 502, so no model/endpoint change was needed — the fix
+  is contained entirely to `memory.py`.
+- Added `test_add_store_write_error_degrades_to_none` in
+  `test_memory_module.py`, mirroring the existing
+  `test_ingest_store_write_error_degrades` test for the sibling method.
+- Verified: `uv run pytest -q tests/test_memory_module.py` (fast, no
+  mem0/chromadb import needed for this file); full `uv run pytest -q` +
+  `uv run ruff check .` running in the background, to be confirmed before
+  committing.
+- **Tier 1 is now closed out** (all 5 items: cross-agent/session buffer
+  leak + the deeper runtime.ts race, missing timeouts, the corrupted-file
+  pattern (3 occurrences), manifest caching, `MemoryModule.add`).
+- **Next:** Tier 2 — add **basedpyright** to the toolchain (owner's choice)
+  as the Python type-safety foundation (`0003-findings-service-core.md`
+  #1), wired into `make lint` and CI, *before* touching #7 (modules
+  returning raw dicts instead of typed models) or #14 (untyped `settings`
+  param), per the priority order's own sequencing note.
