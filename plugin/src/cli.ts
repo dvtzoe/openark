@@ -110,6 +110,11 @@ function removeAgent(name: string, yes: boolean): void {
   console.log(`deleted ${dir}`);
 }
 
+function packageVersion(): string {
+  const pkg = JSON.parse(readFileSync(join(packageRoot(), "package.json"), "utf8"));
+  return typeof pkg.version === "string" ? pkg.version : "0.0.0-dev";
+}
+
 function servicePython(): string {
   const homeVenv = installedVenvPython();
   if (existsSync(homeVenv)) return homeVenv;
@@ -253,7 +258,7 @@ switch (command) {
     uninstallCmd();
     break;
   case "version":
-    console.log("0.1.0");
+    console.log(packageVersion());
     break;
   default:
     console.log(USAGE);

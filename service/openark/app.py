@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from fastapi import FastAPI
 
+from . import __version__
 from .api.v1.router import router as v1_router
 from .core.config import get_settings
 from .core.llm import build_task_runner
@@ -41,7 +42,7 @@ def build_modules() -> ServiceModules:
 def create_app() -> FastAPI:
     app = FastAPI(
         title="openark service",
-        version="0.1.0",
+        version=__version__,
         description="Local service backing openark agents (memory, persona, lessons, skills).",
     )
     settings = get_settings()
