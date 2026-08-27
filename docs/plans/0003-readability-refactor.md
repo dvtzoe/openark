@@ -63,8 +63,9 @@ shared type once beats fixing five call sites separately):
 - [~] **Plugin modules** — `plugin/src/modules/{memory,personality,
       reflection,skills,index}.ts`, `plugin/src/index.ts`, `plugin/src/cli.ts`
       — audited (findings in `0003-findings-plugin-modules.md`), not yet fixed
-- [ ] **Service core** — `service/openark/core/{config,models,registry,llm,
-      prompts}.py`, `service/openark/app.py`
+- [~] **Service core** — `service/openark/core/{config,models,registry,llm,
+      prompts}.py`, `service/openark/app.py` — audited (findings in
+      `0003-findings-service-core.md`), not yet fixed
 - [ ] **Service modules** — `service/openark/modules/{base,memory,persona,
       lessons,skills,channels}.py`
 - [ ] **Service API layer** — `service/openark/api/v1/*.py`
@@ -86,6 +87,10 @@ files, linked here as they're written:
 - [0003-findings-plugin-modules.md](0003-findings-plugin-modules.md) —
   **cross-agent/cross-session buffer leak in memory+reflection modules**
   (highest-priority finding so far), repeated ad hoc arg validation
+- [0003-findings-service-core.md](0003-findings-service-core.md) — **no
+  Python type checker configured anywhere** (type hints unenforced), one
+  corrupted `agent.json` can 500 the whole agent-list endpoint, an
+  undocumented model-routing fallback, a stale `type: ignore`
 
 ## Log
 
@@ -135,3 +140,24 @@ Newest entry last. Each entry: date, what was done, what's next.
   `api/v1/`. Same process: read against `MODULE_SPEC.md`/`DESIGN.md` +
   `READABILITY.md`, verify suspicions before writing them up, draft fixes in
   natural language only.
+
+### 2026-08-28 — Service core audit
+
+- Audited `service/openark/core/{config,models,registry,llm,prompts}.py` +
+  `app.py`. Findings in `0003-findings-service-core.md`.
+- Biggest one: verified (checked `pyproject.toml`, `Makefile`, and
+  `.github/workflows/ci.yml` directly) that **no Python static type checker
+  is configured anywhere** — only `ruff check` runs, which doesn't
+  type-check. A stray `# type: ignore[union-attr]` in `llm.py` is a fossil
+  from a check that no longer runs. This is the highest-leverage fix for
+  the owner's "maximum type safety" goal on the Python side — recommend
+  doing it early (adding pyright/mypy to `make lint` + CI) so the rest of
+  the type-safety pass has a tool driving it instead of manual inspection.
+- Also found a real robustness gap matching the "impossible to break"
+  goal: `AgentRegistry.list()` has no per-agent error handling, so one
+  corrupted `agent.json` 500s the entire `GET /v1/agents` endpoint instead
+  of degrading just that one agent (contradicts ADR 0004's "one polluted
+  agent cannot poison everyone" philosophy, which the plugin side already
+  respects for the single-agent-load case).
+- **Next:** audit `service/openark/modules/{base,memory,persona,lessons,
+  skills,channels}.py`.
