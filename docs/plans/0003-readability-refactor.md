@@ -552,3 +552,45 @@ suite, not assumed.
   duplicate `venvPython`, dead `manifestAllows`, duplicated
   `_require_agent`, hardcoded version string, unnecessary casts) and Tier
   4 (style batch) remain after that.
+
+### 2026-08-28 — Tier 2 #8: tool args parsed with zod; Tier 2 closed out
+
+- Added `plugin/src/core/args.ts` with two shared builders
+  (`requiredString`, `filteredStringArray`) that deliberately replicate
+  the exact leniency every ad hoc check already had (non-string → "",
+  malformed array element dropped rather than rejecting the whole call) —
+  confirmed this by running the full existing test suite unchanged before
+  writing a single new test, and all 110 passed with zero test edits
+  needed. This was a genuine "will the substring-matched error messages
+  still work through a ZodError" question, not assumed: `.rejects.toThrow
+  ("signals is required")` still matches because `ZodError.message` is a
+  JSON blob containing the custom message string, so the old substring
+  assertions keep working.
+- Replaced all ~15 hand-rolled validations across `memory.ts`,
+  `personality.ts`, `reflection.ts`, `skills.ts` with `schema.parse(args)`
+  at the top of each tool's `execute`. `reflect`'s "failures or messages"
+  cross-field rule and `persona_evolve`'s "signals must be non-empty"
+  rule are both expressed as `.refine()` on top of the shared array
+  builder, since which specific non-empty rule applies differs per tool.
+  Deliberately left two low-stakes args alone (`all` on `lessons_list`/
+  `skills_list`, `subscribe` on `channel_subscribe`) — both are already
+  fully safe `=== true`/`=== false` identity checks with no error path,
+  so wrapping them in zod would be forced abstraction, not a real fix.
+- Added `plugin/tests/args.test.ts` — the shared helpers are now
+  infrastructure used by 4 modules and deserve direct unit tests, not
+  just indirect coverage through each module's own tests (owner approved
+  expanding coverage).
+- Verified: `npm run build` (tsc clean), `npx vitest run` (117/117,
+  including the 7 new direct tests), `npx biome check` (clean),
+  `scripts/check_file_sizes.sh` (clean).
+- **Tier 2 is now closed out** (basedpyright added, modules return typed
+  models, tool args parsed with zod).
+- **Next:** Tier 3 — mechanical, low-risk readability/consistency fixes:
+  duplicate-named `venvPython` functions (`0003-findings-plugin-core.md`
+  #3), dead `manifestAllows` code (`...plugin-core.md` #4), duplicated
+  `_require_agent` across 5 API files (`0003-findings-service-api.md`
+  #1), hardcoded version string in 6 places
+  (`...service-api.md` #4), unnecessary `as ModuleContext` cast
+  (`...plugin-core.md` #7), untyped `settings` param + stale
+  `# type: ignore` in `llm.py` (`...service-core.md` #4 — now unblocked
+  since basedpyright landed).
