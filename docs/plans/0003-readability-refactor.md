@@ -502,3 +502,53 @@ Newest entry last. Each entry: date, what was done, what's next.
   `app.state.modules` dict feeding `Any`-typed lookups everywhere. Now
   that basedpyright is wired in, this fix can be verified by the type
   checker itself, not just by reading.
+
+### 2026-08-28 — Tier 2 #7: modules return typed response models; app.state.modules is a typed dataclass
+
+Six commits, one per unit, each verified independently (`basedpyright` +
+`ruff check` + `pytest -q`, full suite, before every commit):
+
+1. **`app.state.modules` typed as a dataclass** (`ServiceModules` in
+   `app.py`) instead of a string-keyed dict. Every `get_X_module` DI
+   function across `api/v1/*.py` now does `request.app.state.modules.x`
+   (attribute access) with a real return type annotation
+   (`-> MemoryModule`, etc.), so `Depends(get_X_module)` gives every
+   endpoint a properly typed `module` parameter instead of `Any`. Verified
+   empirically (not just by reasoning about it) that this is what actually
+   buys the type-safety win here, since `app.state` itself is dynamically
+   typed by Starlette (`State.__getattr__` returns `Any`) — the return-type
+   annotation on the DI function is what `Depends()` actually reads.
+2. **`PersonaModule.evolve` → `PersonaEvolveResponse`**, building
+   `PersonaReplace` objects internally instead of leaving the
+   tuple→dict conversion to `api/v1/persona.py` (a small abstraction leak
+   per `READABILITY.md` §2 — the API layer had to know evolve()'s internal
+   `(old, new)` tuple representation).
+3. **`LessonsModule.reflect/add/retire/register_hits` → their four
+   response models.** Found and removed genuinely dead logic along the
+   way: `add_lesson`'s endpoint re-checked `result["added"] is None` to
+   pick between two `LessonAddResponse` constructions that were already
+   exactly what the module had just returned.
+4. **`SkillsModule.distill/verify` → `DistillResponse`/
+   `SkillVerifyResponse`.**
+5. **`MemoryModule.add/ingest` → `MemoryMutation | None` /
+   `MemoryIngestResponse`.**
+6. **`ChannelsStore.push` → `ChannelItem`** (the raw dict written to the
+   JSONL file still carries the extra `ts` field the model doesn't have —
+   that's a storage-layer detail, not part of the public return contract,
+   so it's dropped only from what's *returned*, not from what's persisted).
+
+Every API endpoint that used to do `ResponseModel(**module.method(...))`
+now does `return module.method(...)` directly — the reconstruction
+boilerplate is gone from all 5 files. Test files updated from dict-index
+(`result["x"]`) to attribute access (`result.x`) throughout; test doubles
+in `test_api.py` that return raw dicts were left as-is where their shape
+already matched the response model, since FastAPI validates/serializes
+any return value against `response_model` regardless of whether it's a
+dict or the real Pydantic instance — confirmed this by running the full
+suite, not assumed.
+- **Next:** Tier 2 #8 — ~15 call sites hand-validate tool args on the
+  plugin side instead of zod schemas (`0003-findings-plugin-modules.md`
+  #2). This closes out Tier 2. Tier 3 (mechanical readability/consistency:
+  duplicate `venvPython`, dead `manifestAllows`, duplicated
+  `_require_agent`, hardcoded version string, unnecessary casts) and Tier
+  4 (style batch) remain after that.
