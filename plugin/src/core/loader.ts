@@ -7,7 +7,7 @@ const MIN_BLOCK_CHARS = 50;
 export async function loadModules(ctx: ModuleContext): Promise<OpenArkModule[]> {
   const active: OpenArkModule[] = [];
   for (const mod of allModules) {
-    if (!ctx.manifest.modules[mod.name]) continue;
+    if (!manifestAllows(ctx.manifest, mod.name)) continue;
     try {
       await mod.init?.(ctx);
       active.push(mod);
