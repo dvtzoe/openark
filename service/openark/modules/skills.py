@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..core.llm import LlmUnavailable, TaskRunner
+from ..core.models import DistillResponse, SkillPayload, SkillVerifyResponse
 from ..core.prompts import PromptSpec, load_prompt, render
 from ..core.registry import AgentRegistry
 
@@ -54,12 +55,12 @@ class SkillsModule:
             )
         return [s for s in skills if s is not None]
 
-    def distill(self, registry: AgentRegistry, agent: str, trace: str) -> dict:
+    def distill(self, registry: AgentRegistry, agent: str, trace: str) -> DistillResponse:
         trace = trace.strip()
         if not trace:
-            return {"created": None, "reason": "empty-trace"}
+            return DistillResponse(reason="empty-trace")
         if self._runner is None or not self._runner.available("distillation"):
-            return {"created": None, "reason": "no-model"}
+            return DistillResponse(reason="no-model")
 
         agent_home = registry.agent_home(agent)
         existing = self.list(agent_home, include_drafts=True)
@@ -68,39 +69,38 @@ class SkillsModule:
         try:
             output = self._runner.complete("distillation", prompt)
         except LlmUnavailable as err:
-            return {"created": None, "reason": f"no-model: {err}"}
+            return DistillResponse(reason=f"no-model: {err}")
         except Exception as err:
             logger.warning("distillation failed: %s", err)
-            return {"created": None, "reason": "llm-error"}
+            return DistillResponse(reason="llm-error")
 
         parsed = _parse_skill(output)
         if parsed is None:
-            return {"created": None, "reason": "unparseable"}
+            return DistillResponse(reason="unparseable")
         name, description, steps = parsed
         slug = _unique_slug(agent_home, name)
         draft_dir = _drafts_dir(agent_home) / slug
         draft_dir.mkdir(parents=True, exist_ok=True)
         (draft_dir / "SKILL.md").write_text(_render_skill_md(slug, description, steps))
         registry.audit(agent, "skill.draft", f"{slug}: {description}")
-        return {
-            "created": {"name": slug, "description": description, "status": "draft"},
-            "reason": None,
-        }
+        return DistillResponse(
+            created=SkillPayload(name=slug, description=description, status="draft")
+        )
 
-    def verify(self, registry: AgentRegistry, agent: str, slug: str) -> dict:
+    def verify(self, registry: AgentRegistry, agent: str, slug: str) -> SkillVerifyResponse:
         agent_home = registry.agent_home(agent)
         if not SLUG_RE.match(slug):
-            return {"verified": False, "reason": "invalid-slug"}
+            return SkillVerifyResponse(verified=False, reason="invalid-slug")
         draft = _drafts_dir(agent_home) / slug
         if not (draft / "SKILL.md").exists():
-            return {"verified": False, "reason": "not-found"}
+            return SkillVerifyResponse(verified=False, reason="not-found")
         target = _skills_dir(agent_home) / slug
         if target.exists():
-            return {"verified": False, "reason": "already-verified"}
+            return SkillVerifyResponse(verified=False, reason="already-verified")
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(draft), str(target))
         registry.audit(agent, "skill.verify", slug)
-        return {"verified": True, "reason": None}
+        return SkillVerifyResponse(verified=True, reason=None)
 
     def _read(self, path: Path, status: str) -> SkillFile | None:
         try:

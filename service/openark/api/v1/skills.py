@@ -49,7 +49,7 @@ def distill_skill(
     module=Depends(get_skills_module),
 ):
     _require_agent(registry, name)
-    return DistillResponse(**module.distill(registry, name, request.trace))
+    return module.distill(registry, name, request.trace)
 
 
 @router.post("/agents/{name}/skills/{slug}/verify", response_model=SkillVerifyResponse)
@@ -60,4 +60,4 @@ def verify_skill(
     module=Depends(get_skills_module),
 ):
     _require_agent(registry, name)
-    return SkillVerifyResponse(**module.verify(registry, name, slug))
+    return module.verify(registry, name, slug)

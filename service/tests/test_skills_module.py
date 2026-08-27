@@ -47,9 +47,9 @@ def test_distill_creates_draft(registry):
     runner = FakeRunner()
     module = make_module(runner)
     result = module.distill(registry, "defoko", "ran make lint, make test, tagged v1.0")
-    assert result["reason"] is None
-    assert result["created"]["name"] == "release-checklist"
-    assert result["created"]["status"] == "draft"
+    assert result.reason is None
+    assert result.created.name == "release-checklist"
+    assert result.created.status == "draft"
 
     home = registry.agent_home("defoko")
     draft = home / "skills" / "drafts" / "release-checklist" / "SKILL.md"
@@ -72,7 +72,8 @@ def test_verify_moves_draft_to_skills(registry):
     module = make_module(FakeRunner())
     module.distill(registry, "defoko", "some successful trace")
     result = module.verify(registry, "defoko", "release-checklist")
-    assert result == {"verified": True, "reason": None}
+    assert result.verified is True
+    assert result.reason is None
 
     home = registry.agent_home("defoko")
     assert (home / "skills" / "release-checklist" / "SKILL.md").exists()
@@ -88,35 +89,35 @@ def test_verify_moves_draft_to_skills(registry):
 
 def test_verify_unknown_slug(registry):
     module = make_module(FakeRunner())
-    assert module.verify(registry, "defoko", "ghost")["reason"] == "not-found"
-    assert module.verify(registry, "defoko", "../escape")["reason"] == "invalid-slug"
+    assert module.verify(registry, "defoko", "ghost").reason == "not-found"
+    assert module.verify(registry, "defoko", "../escape").reason == "invalid-slug"
 
 
 def test_distill_empty_trace(registry):
     module = make_module(FakeRunner())
-    assert module.distill(registry, "defoko", "   ")["reason"] == "empty-trace"
+    assert module.distill(registry, "defoko", "   ").reason == "empty-trace"
 
 
 def test_distill_without_model(registry):
     module = make_module(None)
-    assert module.distill(registry, "defoko", "trace")["reason"] == "no-model"
+    assert module.distill(registry, "defoko", "trace").reason == "no-model"
 
 
 def test_distill_unparseable_output(registry):
     module = make_module(FakeRunner(output="This is not a skill format"))
-    assert module.distill(registry, "defoko", "trace")["reason"] == "unparseable"
+    assert module.distill(registry, "defoko", "trace").reason == "unparseable"
 
 
 def test_distill_llm_error(registry):
     module = make_module(FakeRunner(fail=RuntimeError("boom")))
-    assert module.distill(registry, "defoko", "trace")["reason"] == "llm-error"
+    assert module.distill(registry, "defoko", "trace").reason == "llm-error"
 
 
 def test_distill_slug_collisions_get_suffixes(registry):
     module = make_module(FakeRunner())
     module.distill(registry, "defoko", "trace one")
     result = module.distill(registry, "defoko", "trace two")
-    assert result["created"]["name"] == "release-checklist-2"
+    assert result.created.name == "release-checklist-2"
     home = registry.agent_home("defoko")
     drafts = sorted(p.parent.name for p in (home / "skills" / "drafts").glob("*/SKILL.md"))
     assert drafts == ["release-checklist", "release-checklist-2"]
@@ -127,7 +128,7 @@ def test_distill_sanitizes_bad_names(registry):
         FakeRunner(output=DISTILL_OUTPUT.replace("release-checklist", "Bad Name!!"))
     )
     result = module.distill(registry, "defoko", "trace")
-    assert result["created"]["name"] == "bad-name"
+    assert result.created.name == "bad-name"
     home = registry.agent_home("defoko")
     skill = home / "skills" / "drafts" / "bad-name" / "SKILL.md"
     assert skill.exists()
@@ -141,7 +142,7 @@ def test_verify_twice_conflicts(registry):
     module.distill(registry, "defoko", "trace two")
     module.verify(registry, "defoko", "release-checklist-2")
     result = module.verify(registry, "defoko", "release-checklist-2")
-    assert result["reason"] == "not-found"
+    assert result.reason == "not-found"
 
 
 def test_list_skips_unreadable_skill_file(registry):
