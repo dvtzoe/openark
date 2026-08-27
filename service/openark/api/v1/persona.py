@@ -2,13 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ...core.models import PersonaEvolveRequest, PersonaEvolveResponse, PersonaResponse
 from ...core.registry import AgentNotFound, AgentRegistry
+from ...modules.persona import PersonaModule
 from .agents import get_registry
 
 router = APIRouter(tags=["persona"])
 
 
-def get_persona_module(request: Request):
-    return request.app.state.modules["persona"]
+def get_persona_module(request: Request) -> PersonaModule:
+    return request.app.state.modules.persona
 
 
 @router.get("/agents/{name}/persona", response_model=PersonaResponse)

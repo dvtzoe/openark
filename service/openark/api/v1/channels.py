@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from ...core.models import ChannelItem, ChannelPushRequest
 from ...core.registry import AgentNotFound, AgentRegistry
+from ...modules.channels import ChannelsStore
 from .agents import get_registry
 
 logger = logging.getLogger(__name__)
@@ -12,8 +13,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["channels"])
 
 
-def get_channels_store(request: Request):
-    return request.app.state.modules["channels"]
+def get_channels_store(request: Request) -> ChannelsStore:
+    return request.app.state.modules.channels
 
 
 def _require_agent(registry: AgentRegistry, name: str):

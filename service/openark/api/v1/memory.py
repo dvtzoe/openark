@@ -9,6 +9,8 @@ from ...core.models import (
     MemoryRecallResponse,
 )
 from ...core.registry import AgentNotFound, AgentRegistry
+from ...modules.channels import ChannelsStore
+from ...modules.memory import MemoryModule
 from .agents import get_registry
 
 router = APIRouter(tags=["memory"])
@@ -16,12 +18,12 @@ router = APIRouter(tags=["memory"])
 UNAVAILABLE = "memory module unavailable (install openark-service[memory])"
 
 
-def get_memory_module(request: Request):
-    return request.app.state.modules["memory"]
+def get_memory_module(request: Request) -> MemoryModule:
+    return request.app.state.modules.memory
 
 
-def get_channels_store(request: Request):
-    return request.app.state.modules["channels"]
+def get_channels_store(request: Request) -> ChannelsStore:
+    return request.app.state.modules.channels
 
 
 def _require_agent(registry: AgentRegistry, name: str):
@@ -32,7 +34,7 @@ def _require_agent(registry: AgentRegistry, name: str):
     return registry.agent_home(name)
 
 
-def _require_module(module, registry: AgentRegistry):
+def _require_module(module: MemoryModule, registry: AgentRegistry) -> MemoryModule:
     if not module.ready(registry):
         raise HTTPException(status_code=503, detail=UNAVAILABLE)
     return module

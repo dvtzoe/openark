@@ -8,13 +8,14 @@ from ...core.models import (
     SkillVerifyResponse,
 )
 from ...core.registry import AgentNotFound, AgentRegistry
+from ...modules.skills import SkillsModule
 from .agents import get_registry
 
 router = APIRouter(tags=["skills"])
 
 
-def get_skills_module(request: Request):
-    return request.app.state.modules["skills"]
+def get_skills_module(request: Request) -> SkillsModule:
+    return request.app.state.modules.skills
 
 
 def _require_agent(registry: AgentRegistry, name: str):

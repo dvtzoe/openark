@@ -12,13 +12,14 @@ from ...core.models import (
     ReflectResponse,
 )
 from ...core.registry import AgentNotFound, AgentRegistry
+from ...modules.lessons import LessonsModule
 from .agents import get_registry
 
 router = APIRouter(tags=["lessons"])
 
 
-def get_lessons_module(request: Request):
-    return request.app.state.modules["lessons"]
+def get_lessons_module(request: Request) -> LessonsModule:
+    return request.app.state.modules.lessons
 
 
 def _require_agent(registry: AgentRegistry, name: str):

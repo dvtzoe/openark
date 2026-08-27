@@ -36,7 +36,7 @@ def client(tmp_path, monkeypatch, fake_memory):
     monkeypatch.setenv("OPENARK_HOME", str(tmp_path / "openark"))
     reset_settings_cache()
     app = create_app()
-    app.state.modules["memory"] = fake_memory
+    app.state.modules.memory = fake_memory
     with TestClient(app) as test_client:
         yield test_client
     reset_settings_cache()
@@ -123,7 +123,7 @@ def test_memory_module_unready_503(client, monkeypatch):
         def ready(self, registry):
             return False
 
-    client.app.state.modules["memory"] = Unready()
+    client.app.state.modules.memory = Unready()
     assert client.get("/v1/agents/defoko/memory/recall").status_code == 503
     assert client.post("/v1/agents/defoko/memory", json={"text": "x"}).status_code == 503
     assert client.post("/v1/agents/defoko/memory/ingest", json={"text": "x"}).status_code == 503
@@ -141,7 +141,7 @@ def test_persona_endpoints(client, monkeypatch):
                 "replaced": [("old pref", "new pref")],
             }
 
-    client.app.state.modules["persona"] = FakePersonaModule()
+    client.app.state.modules.persona = FakePersonaModule()
     res = client.post("/v1/agents/defoko/persona/evolve", json={"signals": ["a", "b", "c"]})
     assert res.status_code == 200
     body = res.json()
@@ -212,7 +212,7 @@ def test_lessons_endpoints(client, monkeypatch):
             return {"counted": True, "retired": []}
 
     fake = FakeLessonsModule()
-    client.app.state.modules["lessons"] = fake
+    client.app.state.modules.lessons = fake
 
     res = client.get("/v1/agents/defoko/lessons")
     assert res.status_code == 200
@@ -266,7 +266,7 @@ def test_skills_endpoints(client):
             return {"verified": True, "reason": None}
 
     fake = FakeSkillsModule()
-    client.app.state.modules["skills"] = fake
+    client.app.state.modules.skills = fake
 
     res = client.get("/v1/agents/defoko/skills")
     assert [s["name"] for s in res.json()["skills"]] == ["live-skill"]
@@ -289,7 +289,7 @@ def test_channels_and_recall_merge(client, fake_memory):
     client.post("/v1/agents", json={"name": "defoko"})
     client.post("/v1/agents", json={"name": "observer"})
     store = ChannelsStore(client.app.state.registry.root)
-    client.app.state.modules["channels"] = store
+    client.app.state.modules.channels = store
 
     res = client.post(
         "/v1/agents/defoko/channels/team",
@@ -327,7 +327,7 @@ def test_read_channel_skips_malformed_items(client):
 
     client.post("/v1/agents", json={"name": "defoko"})
     store = ChannelsStore(client.app.state.registry.root)
-    client.app.state.modules["channels"] = store
+    client.app.state.modules.channels = store
 
     client.post("/v1/agents/defoko/channels/team", json={"text": "good item"})
     # A line that parses as valid JSON but is missing a field ChannelItem
