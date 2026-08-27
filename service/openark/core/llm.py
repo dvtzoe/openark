@@ -163,6 +163,11 @@ def resolve_route(
 ) -> ResolvedModel | None:
     route: ModelRoute | None = (settings or get_settings()).models.get(task)
     if route is None:
+        # A task missing from openark.json's `models` map isn't treated as
+        # "no route" outright — it defaults to inheriting opencode's small
+        # model first, so a bare-bones openark.json still gets LLM-backed
+        # features if opencode itself has a small model configured. This
+        # still degrades to None below if that isn't configured either.
         route = InheritRoute(inherit="small")
     if isinstance(route, InheritRoute):
         config = opencode_config if opencode_config is not None else read_opencode_config()

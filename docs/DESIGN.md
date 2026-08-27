@@ -89,5 +89,10 @@ Madaan-style prompt self-editing.
   `persona_update`, `embeddings`) to either `{inherit: main|small}` —
   resolved from the opencode config + auth — or an explicit
   provider/model/base_url/api_key_env.
+- A task with no entry in `openark.json` isn't immediately treated as "no
+  route" — it defaults to `{inherit: small}`, so a bare-bones
+  `openark.json` still gets LLM-backed features for free if opencode
+  itself has a small model configured.
 - Missing route = the feature degrades to a documented no-op, never a
-  broken session.
+  broken session (this still applies if the small-model fallback above
+  also has nothing to inherit from).
