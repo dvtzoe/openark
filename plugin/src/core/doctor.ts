@@ -14,6 +14,7 @@ import {
   installCommands,
   installPluginShim,
   isManagedFile,
+  isOpenarkLink,
   linkSkills,
   listAgents,
   opencodeConfigDir,
@@ -163,13 +164,13 @@ function verifiedSkills(agent: string, home: string): string[] {
   );
 }
 
-function checkSkillLinks(configDir: string, home: string): DoctorCheck {
+function checkSkillLinks(configDir: string, home: string, agents: string[]): DoctorCheck {
   const id = "skill-links";
   const skillsDir = join(configDir, "skills");
   const missing: string[] = [];
+  const collisions: string[] = [];
   const taken: string[] = [];
   const stale: string[] = [];
-  const agents = listAgents(home);
 
   for (const agent of agents) {
     for (const skill of verifiedSkills(agent, home)) {
@@ -178,7 +179,7 @@ function checkSkillLinks(configDir: string, home: string): DoctorCheck {
       if (target === null && !existsSync(linkPath)) {
         missing.push(skill);
       } else if (target !== join(agentHome(agent, home), "skills", skill)) {
-        taken.push(skill);
+        (isOpenarkLink(linkPath, home) ? collisions : taken).push(skill);
       }
     }
   }
@@ -186,20 +187,20 @@ function checkSkillLinks(configDir: string, home: string): DoctorCheck {
   if (existsSync(skillsDir)) {
     for (const entry of readdirSync(skillsDir)) {
       const linkPath = join(skillsDir, entry);
-      const target = linkTarget(linkPath);
-      if (target?.startsWith(home) && !existsSync(linkPath)) {
+      if (isOpenarkLink(linkPath, home) && !existsSync(linkPath)) {
         stale.push(entry);
       }
     }
   }
 
-  if (!missing.length && !taken.length && !stale.length) {
+  if (!missing.length && !collisions.length && !taken.length && !stale.length) {
     return { id, status: "ok", message: `skill links: ${skillsDir}` };
   }
 
   const parts: string[] = [];
   if (missing.length) parts.push(`missing links: ${missing.join(", ")}`);
   if (stale.length) parts.push(`stale links: ${stale.join(", ")}`);
+  if (collisions.length) parts.push(`shared name across agents: ${collisions.join(", ")}`);
   if (taken.length) parts.push(`names taken by non-openark entries: ${taken.join(", ")}`);
   const check: DoctorCheck = {
     id,
@@ -291,8 +292,8 @@ function checkGlobalConfig(home: string): DoctorCheck {
   return { id, status: "ok", message: `global config: ${path}` };
 }
 
-async function checkService(): Promise<DoctorCheck> {
-  const config = readGlobalConfig();
+async function checkService(home: string): Promise<DoctorCheck> {
+  const config = readGlobalConfig(home);
   const client = new ServiceClient(serviceBaseUrl(config));
   return (await client.health())
     ? { id: "service", status: "ok", message: "service: up" }
@@ -318,9 +319,9 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorChec
     ...agents.map((name) => checkAgentFile(name, configDir, home)),
     ...agents.map((name) => checkAgentManifest(name, home)),
     ...checkOrphanAgentDirs(home),
-    checkSkillLinks(configDir, home),
+    checkSkillLinks(configDir, home, agents),
     checkCommands(configDir),
-    await checkService(),
+    await checkService(home),
   ];
   return checks;
 }

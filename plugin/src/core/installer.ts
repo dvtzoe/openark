@@ -9,7 +9,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { agentHome, openarkHome } from "./config.js";
 
@@ -139,10 +139,11 @@ export function linkSkills(configDir: string, home: string = openarkHome()): str
   return linked;
 }
 
-function isOpenarkLink(linkPath: string, home: string): boolean {
+export function isOpenarkLink(linkPath: string, home: string): boolean {
   try {
     if (!lstatSync(linkPath).isSymbolicLink()) return false;
-    return readlinkSync(linkPath).startsWith(home);
+    const target = readlinkSync(linkPath);
+    return target === home || target.startsWith(home + sep);
   } catch {
     return false;
   }
@@ -166,19 +167,15 @@ export function installCommands(
   return copied;
 }
 
-function removeIfManaged(path: string, marker: string): boolean {
-  try {
-    if (!existsSync(path) || !readFileSync(path, "utf8").includes(marker)) return false;
-  } catch {
-    return false;
-  }
+function removeIfManaged(path: string): boolean {
+  if (!isManagedFile(path)) return false;
   rmSync(path, { force: true });
   return true;
 }
 
 export function uninstallPluginShim(configDir: string): string | null {
   const shim = join(configDir, "plugins", "openark.js");
-  return removeIfManaged(shim, MANAGED_NOTE) ? shim : null;
+  return removeIfManaged(shim) ? shim : null;
 }
 
 export function removeAgentFiles(configDir: string): string[] {
@@ -187,7 +184,7 @@ export function removeAgentFiles(configDir: string): string[] {
   if (!existsSync(agentsDir)) return removed;
   for (const entry of readdirSync(agentsDir)) {
     const path = join(agentsDir, entry);
-    if (entry.endsWith(".md") && removeIfManaged(path, MANAGED_NOTE)) removed.push(path);
+    if (entry.endsWith(".md") && removeIfManaged(path)) removed.push(path);
   }
   return removed;
 }

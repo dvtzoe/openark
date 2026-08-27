@@ -11,9 +11,9 @@ export function agentHome(agent: string, home: string = openarkHome()): string {
   return join(home, "agents", agent);
 }
 
-export function readGlobalConfig(): GlobalConfig {
+export function readGlobalConfig(home: string = openarkHome()): GlobalConfig {
   const defaults: GlobalConfig = { servicePort: 8765, models: {} };
-  const path = join(openarkHome(), "openark.json");
+  const path = join(home, "openark.json");
   if (!existsSync(path)) return defaults;
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<GlobalConfig>;
