@@ -52,14 +52,17 @@ understand and maintain it. Goal is not new features — it's:
 
 ## Scope map
 
-Ordered roughly core-outward, since core types/contracts are what everything
-else depends on (fixing a shared type once beats fixing five call sites
-separately):
+Status legend: `[ ]` not started · `[~]` audited, fix not yet applied ·
+`[x]` audited and fixed (tests+lint green). Ordered roughly core-outward,
+since core types/contracts are what everything else depends on (fixing a
+shared type once beats fixing five call sites separately):
 
-- [ ] **Plugin core** — `plugin/src/core/{types,config,service,loader,
+- [~] **Plugin core** — `plugin/src/core/{types,config,service,loader,
       lifecycle,runtime,hooks,bootstrap,agent-template,installer,doctor}.ts`
-- [ ] **Plugin modules** — `plugin/src/modules/{memory,personality,
+      — audited (findings in `0003-findings-plugin-core.md`), not yet fixed
+- [~] **Plugin modules** — `plugin/src/modules/{memory,personality,
       reflection,skills,index}.ts`, `plugin/src/index.ts`, `plugin/src/cli.ts`
+      — audited (findings in `0003-findings-plugin-modules.md`), not yet fixed
 - [ ] **Service core** — `service/openark/core/{config,models,registry,llm,
       prompts}.py`, `service/openark/app.py`
 - [ ] **Service modules** — `service/openark/modules/{base,memory,persona,
@@ -78,7 +81,11 @@ change, not a plugin readability fix.
 Per-area audit findings and natural-language draft fixes live in sibling
 files, linked here as they're written:
 
-- (none yet — audit not started)
+- [0003-findings-plugin-core.md](0003-findings-plugin-core.md) — timeouts,
+  manifest caching, `venvPython` naming collision, dead code, magic numbers
+- [0003-findings-plugin-modules.md](0003-findings-plugin-modules.md) —
+  **cross-agent/cross-session buffer leak in memory+reflection modules**
+  (highest-priority finding so far), repeated ad hoc arg validation
 
 ## Log
 
@@ -99,3 +106,32 @@ Newest entry last. Each entry: date, what was done, what's next.
 - **Next:** start the audit at the plugin core (`plugin/src/core/`), since
   everything else depends on its types/contracts. Read each file, check
   against `MODULE_SPEC.md` + `READABILITY.md`, note findings (don't fix).
+
+### 2026-08-28 — Plugin audit (core + modules)
+
+- Audited all of `plugin/src/core/*.ts`, `index.ts`, `cli.ts`. 8 findings,
+  written to `0003-findings-plugin-core.md`. Verified each with grep/reading
+  call sites before writing it up (not guessing) — e.g. confirmed
+  `manifestAllows` truly has zero callers, confirmed `venvPython` really is
+  two different functions with the same name, confirmed `getJSON`/`postJSON`
+  really have no timeout unlike `health()`.
+- Audited all of `plugin/src/modules/*.ts`. Found a real correctness bug,
+  not just style: `memory.ts` and `reflection.ts` keep their session
+  transcript/failure buffers as **module-scope singletons**, shared across
+  every agent and session in the process, despite the documented
+  multi-agent/private-memory architecture and `runtime.ts`'s explicit
+  agent-switching support. Verified via grep that the `ctx` parameter
+  in the affected handlers is literally named `_ctx` (unused) at all three
+  call sites. Written up in `0003-findings-plugin-modules.md` with a
+  concrete two-concurrent-session failure scenario. This is the
+  highest-priority finding of the audit so far.
+- Also found: every module tool (~15 call sites across all 4 modules)
+  hand-validates its own args with ad hoc `typeof`/`Array.isArray` checks
+  instead of a zod schema, even though zod is already used elsewhere in the
+  plugin for the outer tool-args envelope — a direct match for the
+  "parse, don't validate" gap called out in `READABILITY.md` §5.
+- **Next:** audit the service (Python) side — start with `service/openark/
+  core/` (config, models, registry, llm, prompts), then `modules/`, then
+  `api/v1/`. Same process: read against `MODULE_SPEC.md`/`DESIGN.md` +
+  `READABILITY.md`, verify suspicions before writing them up, draft fixes in
+  natural language only.
