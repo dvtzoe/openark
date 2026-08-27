@@ -6,7 +6,13 @@ import { seedAgentHome } from "./core/agent-template.js";
 import { bootstrapVenv, installedVenvPython } from "./core/bootstrap.js";
 import { agentHome, openarkHome, readGlobalConfig, serviceBaseUrl } from "./core/config.js";
 import { type DoctorCheck, runDoctor } from "./core/doctor.js";
-import { installAll, listAgents, packageRoot, uninstallAll } from "./core/installer.js";
+import {
+  installAll,
+  listAgents,
+  packageRoot,
+  readAgentDescription,
+  uninstallAll,
+} from "./core/installer.js";
 import { devVenvPython, serviceDirFromEnv } from "./core/lifecycle.js";
 import { ServiceClient } from "./core/service.js";
 
@@ -48,15 +54,7 @@ function listAgentsCmd(): void {
     return;
   }
   for (const name of names) {
-    const manifestPath = join(agentHome(name), "agent.json");
-    let description = "";
-    if (existsSync(manifestPath)) {
-      try {
-        const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { description?: string };
-        description = manifest.description ?? "";
-      } catch {}
-    }
-    console.log(`${name}${description ? ` — ${description}` : ""}`);
+    console.log(`${name} — ${readAgentDescription(name)}`);
   }
 }
 
