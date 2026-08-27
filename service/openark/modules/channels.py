@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from ..core.models import ChannelItem
 from ..core.registry import AgentRegistry
 
 MAX_CHANNEL_ITEMS = 1000
@@ -34,15 +35,16 @@ class ChannelsStore:
         channel: str,
         text: str,
         kind: str = "memory",
-    ) -> dict[str, Any]:
+    ) -> ChannelItem:
         channel = normalize_channel_name(channel)
         text = text.strip()
         if not text:
             raise ValueError("channel item text must not be empty")
+        kind = kind if kind in ("memory", "lesson") else "memory"
         item = {
             "id": uuid.uuid4().hex[:12],
             "text": text,
-            "kind": kind if kind in ("memory", "lesson") else "memory",
+            "kind": kind,
             "source_agent": agent,
             "ts": datetime.now(UTC).isoformat(),
         }
@@ -52,7 +54,7 @@ class ChannelsStore:
             fh.write(json.dumps(item) + "\n")
         self._trim(path)
         registry.audit(agent, "channel.push", f"#{channel} {item['id']}")
-        return item
+        return ChannelItem(id=item["id"], text=text, source_agent=agent, kind=kind)
 
     def list_channel(self, channel: str) -> list[dict[str, Any]]:
         channel = normalize_channel_name(channel)

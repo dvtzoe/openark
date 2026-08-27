@@ -54,10 +54,9 @@ def push_to_channel(
 ):
     _require_agent(registry, name)
     try:
-        item = store.push(registry, name, channel, request.text, kind=request.kind)
+        return store.push(registry, name, channel, request.text, kind=request.kind)
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
-    return ChannelItem(**item)
 
 
 @router.get("/agents/{name}/channels", response_model=list[str])

@@ -28,8 +28,8 @@ def test_normalize_channel_name():
 
 def test_push_records_provenance(registry, store):
     item = store.push(registry, "defoko", "team", "User prefers vitest")
-    assert item["source_agent"] == "defoko"
-    assert item["kind"] == "memory"
+    assert item.source_agent == "defoko"
+    assert item.kind == "memory"
     items = store.list_channel("team")
     assert len(items) == 1
     assert items[0]["text"] == "User prefers vitest"
