@@ -143,7 +143,10 @@ describe("memoryModule", () => {
     await subscribe.execute({ channel: "team" });
     expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/defoko/channels/team/subscribe", {});
     await subscribe.execute({ channel: "team", subscribe: false });
-    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/defoko/channels/team/unsubscribe", {});
+    expect(service.postJSON).toHaveBeenCalledWith(
+      "/v1/agents/defoko/channels/team/unsubscribe",
+      {},
+    );
   });
 
   it("renders channel provenance in injections", async () => {

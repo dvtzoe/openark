@@ -80,21 +80,32 @@ export function renderAgentFile(name: string, description: string, home: string)
   ].join("\n");
 }
 
+export function readAgentDescription(name: string, home: string = openarkHome()): string {
+  const manifestPath = join(agentHome(name, home), "agent.json");
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { description?: string };
+    if (manifest.description) return manifest.description;
+  } catch {
+    // keep default description
+  }
+  return `openark agent ${name}`;
+}
+
+export function isManagedFile(path: string): boolean {
+  try {
+    return existsSync(path) && readFileSync(path, "utf8").includes(MANAGED_NOTE);
+  } catch {
+    return false;
+  }
+}
+
 export function generateAgentFiles(configDir: string, home: string = openarkHome()): string[] {
   const agentsDir = join(configDir, "agents");
   mkdirSync(agentsDir, { recursive: true });
   const written: string[] = [];
   for (const name of listAgents(home)) {
-    const manifestPath = join(agentHome(name, home), "agent.json");
-    let description = `openark agent ${name}`;
-    try {
-      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { description?: string };
-      if (manifest.description) description = manifest.description;
-    } catch {
-      // keep default description
-    }
     const path = join(agentsDir, `${name}.md`);
-    writeFileSync(path, renderAgentFile(name, description, home));
+    writeFileSync(path, renderAgentFile(name, readAgentDescription(name, home), home));
     written.push(path);
   }
   return written;

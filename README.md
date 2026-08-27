@@ -99,6 +99,9 @@ openark list              # list agents and their descriptions
 openark create <name>     # blank agent home (edit persona.core.md yourself)
 openark rm <name> --yes   # delete an agent home (irreversible)
 openark status            # service: up / down
+openark doctor            # check the setup for problems
+openark doctor --fix      # ... and repair what it can (shim, agent files,
+                          #     skills, commands, service venv)
 ```
 
 Agent state lives in `~/.openark/agents/<name>/` as plain files:

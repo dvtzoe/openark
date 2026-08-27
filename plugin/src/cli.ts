@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { seedAgentHome } from "./core/agent-template.js";
 import { bootstrapVenv, venvPython } from "./core/bootstrap.js";
 import { agentHome, openarkHome, readGlobalConfig, serviceBaseUrl } from "./core/config.js";
+import { type DoctorCheck, runDoctor } from "./core/doctor.js";
 import { installAll, listAgents, packageRoot, uninstallAll } from "./core/installer.js";
 import { ServiceClient } from "./core/service.js";
 
@@ -19,6 +20,9 @@ Commands:
   rm <name> --yes               delete an agent home (irreversible)
   start                         start the openark service (uvicorn)
   status                        check whether the service is up
+  doctor [--fix]                check the setup for problems; --fix repairs
+                                what it can (shim, agent files, skills,
+                                commands, service venv)
   install                       wire openark into opencode (plugin shim, agent
                                 files, skills, commands, service venv)
   uninstall                     remove openark wiring from opencode (plugin
@@ -139,6 +143,38 @@ async function checkService(): Promise<void> {
   console.log((await client.health()) ? "service: up" : "service: down");
 }
 
+function printChecks(checks: DoctorCheck[]): void {
+  for (const check of checks) {
+    const label = check.status.padEnd(5);
+    const hint = check.hint ? ` (${check.hint})` : "";
+    const fixable = check.status !== "ok" && check.fix ? " — fixable with --fix" : "";
+    console.log(`${label} ${check.message}${hint}${fixable}`);
+  }
+}
+
+async function doctorCmd(fix: boolean): Promise<void> {
+  const serviceDir = process.env.OPENARK_SERVICE_DIR ?? join(process.cwd(), "service");
+  let checks = await runDoctor({ serviceDir });
+  if (fix) {
+    for (const check of checks) {
+      if (check.status === "ok" || !check.fix) continue;
+      try {
+        console.log(`fixed: ${check.fix()}`);
+      } catch (err) {
+        console.error(`could not fix ${check.id}: ${String(err)}`);
+      }
+    }
+    checks = await runDoctor({ serviceDir });
+  }
+  printChecks(checks);
+  const errors = checks.filter((check) => check.status === "error");
+  const warns = checks.filter((check) => check.status === "warn");
+  if (errors.length || warns.length) {
+    console.log(`${errors.length} problem(s), ${warns.length} warning(s)`);
+  }
+  if (errors.length) process.exit(1);
+}
+
 function installCmd(): void {
   try {
     const { python, created } = bootstrapVenv({
@@ -206,6 +242,9 @@ switch (command) {
     break;
   case "status":
     await checkService();
+    break;
+  case "doctor":
+    await doctorCmd(args.includes("--fix"));
     break;
   case "install":
     installCmd();
