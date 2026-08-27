@@ -2,8 +2,13 @@ import { basename } from "node:path";
 import { z } from "zod";
 import { requiredString } from "../core/args.js";
 import { pushBounded } from "../core/bounded-buffer.js";
-import type { InjectionBlock, ModuleContext, ModuleTool, OpenArkModule } from "../core/types.js";
-import type { ToolExecuteContext } from "../core/types.js";
+import type {
+  InjectionBlock,
+  ModuleContext,
+  ModuleTool,
+  OpenArkModule,
+  ToolExecuteContext,
+} from "../core/types.js";
 import type { components } from "../generated/api-types.js";
 
 const memoryAddArgs = z.object({ text: requiredString("text is required") });

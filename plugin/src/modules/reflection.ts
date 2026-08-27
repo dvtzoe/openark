@@ -1,8 +1,13 @@
 import { z } from "zod";
 import { filteredStringArray, requiredString } from "../core/args.js";
 import { pushBounded } from "../core/bounded-buffer.js";
-import type { InjectionBlock, ModuleContext, ModuleTool, OpenArkModule } from "../core/types.js";
-import type { ToolResultEvent } from "../core/types.js";
+import type {
+  InjectionBlock,
+  ModuleContext,
+  ModuleTool,
+  OpenArkModule,
+  ToolResultEvent,
+} from "../core/types.js";
 import type { components } from "../generated/api-types.js";
 
 type LessonsResponse = components["schemas"]["LessonsResponse"];
