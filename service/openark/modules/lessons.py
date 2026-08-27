@@ -292,7 +292,7 @@ def _load_state(agent_home: Path) -> dict[str, Any]:
             state = json.loads(path.read_text())
             if isinstance(state.get("seen"), list):
                 return state
-        except ValueError:
+        except (ValueError, OSError):
             pass
     return {"seen": []}
 
