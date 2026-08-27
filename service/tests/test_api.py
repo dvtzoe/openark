@@ -138,7 +138,7 @@ def test_persona_endpoints(client, monkeypatch):
             return {
                 "updated": True,
                 "added": ["Likes dark mode"],
-                "replaced": [("old pref", "new pref")],
+                "replaced": [{"old": "old pref", "new": "new pref"}],
             }
 
     client.app.state.modules.persona = FakePersonaModule()

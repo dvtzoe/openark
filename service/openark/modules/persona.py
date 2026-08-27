@@ -1,8 +1,8 @@
 import logging
 from pathlib import Path
-from typing import Any
 
 from ..core.llm import LlmUnavailable, TaskRunner
+from ..core.models import PersonaEvolveResponse, PersonaReplace
 from ..core.prompts import PromptSpec, load_prompt, render
 from ..core.registry import AgentRegistry
 
@@ -34,13 +34,13 @@ class PersonaModule:
         agent: str,
         signals: list[str],
         threshold: int = DEFAULT_THRESHOLD,
-    ) -> dict[str, Any]:
+    ) -> PersonaEvolveResponse:
         distinct = list(dict.fromkeys(s.strip() for s in signals if s.strip()))
         if len(distinct) < threshold:
-            return {"updated": False, "added": [], "replaced": [], "reason": "below-threshold"}
+            return PersonaEvolveResponse(reason="below-threshold")
 
         if self._runner is None or not self._runner.available("persona_update"):
-            return {"updated": False, "added": [], "replaced": [], "reason": "no-model"}
+            return PersonaEvolveResponse(reason="no-model")
 
         core, evolving = registry.read_persona(agent)
         header, preferences = _split_evolving(evolving)
@@ -53,18 +53,18 @@ class PersonaModule:
         try:
             output = self._runner.complete("persona_update", prompt)
         except LlmUnavailable as err:
-            return {"updated": False, "added": [], "replaced": [], "reason": f"no-model: {err}"}
+            return PersonaEvolveResponse(reason=f"no-model: {err}")
         except Exception as err:
             logger.warning("persona update failed: %s", err)
-            return {"updated": False, "added": [], "replaced": [], "reason": "llm-error"}
+            return PersonaEvolveResponse(reason="llm-error")
 
         adds, replaces = _parse_proposal(output)
         if not adds and not replaces:
-            return {"updated": False, "added": [], "replaced": [], "reason": "no-changes"}
+            return PersonaEvolveResponse(reason="no-changes")
 
         new_preferences, applied_adds, applied_replaces = _apply(preferences, adds, replaces)
         if not applied_adds and not applied_replaces:
-            return {"updated": False, "added": [], "replaced": [], "reason": "no-match"}
+            return PersonaEvolveResponse(reason="no-match")
 
         registry.write_persona(
             agent,
@@ -72,11 +72,11 @@ class PersonaModule:
             _format_evolving(header, new_preferences),
         )
         registry.audit(agent, "persona.evolve", _diff_detail(applied_adds, applied_replaces))
-        return {
-            "updated": True,
-            "added": applied_adds,
-            "replaced": applied_replaces,
-        }
+        return PersonaEvolveResponse(
+            updated=True,
+            added=applied_adds,
+            replaced=[PersonaReplace(old=old, new=new) for old, new in applied_replaces],
+        )
 
 
 def _split_evolving(content: str) -> tuple[list[str], list[str]]:

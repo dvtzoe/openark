@@ -32,9 +32,7 @@ def evolve_persona(
         registry.get(name)
     except AgentNotFound as err:
         raise HTTPException(status_code=404, detail="no such agent") from err
-    result = module.evolve(registry, name, request.signals, threshold=request.threshold)
-    replaced = [{"old": old, "new": new} for old, new in result.get("replaced", [])]
-    return PersonaEvolveResponse(**{**result, "replaced": replaced})
+    return module.evolve(registry, name, request.signals, threshold=request.threshold)
 
 
 @router.get("/personas", response_model=list[str])
