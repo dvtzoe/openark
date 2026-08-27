@@ -9,20 +9,33 @@ type Lesson = components["schemas"]["Lesson"];
 
 const MAX_BUFFERED = 100;
 
-type Buffers = {
+type SessionBuffer = {
   failures: ToolResultEvent[];
   messages: string[];
-  countedSessions: Set<string>;
 };
 
-const buffers: Buffers = { failures: [], messages: [], countedSessions: new Set() };
+// Keyed by session, not shared across the process: two concurrent sessions
+// (same or different agent) must never mix failures/corrections. See
+// docs/plans/0003-findings-plugin-modules.md #1.
+const buffers = new Map<string, SessionBuffer>();
+let countedSessions = new Set<string>();
+
+function bufferFor(ctx: ModuleContext): SessionBuffer {
+  const key = ctx.session?.id ?? "";
+  let buf = buffers.get(key);
+  if (!buf) {
+    buf = { failures: [], messages: [] };
+    buffers.set(key, buf);
+  }
+  return buf;
+}
 
 function registerHits(ctx: ModuleContext, lessons: Lesson[]): void {
   const sessionID = ctx.session?.id;
-  if (!sessionID || buffers.countedSessions.has(sessionID)) return;
-  buffers.countedSessions.add(sessionID);
-  if (buffers.countedSessions.size > 500) {
-    buffers.countedSessions = new Set([...buffers.countedSessions].slice(-250));
+  if (!sessionID || countedSessions.has(sessionID)) return;
+  countedSessions.add(sessionID);
+  if (countedSessions.size > 500) {
+    countedSessions = new Set([...countedSessions].slice(-250));
   }
   ctx.service
     .postJSON(`/v1/agents/${ctx.agent}/lessons/hits`, {
@@ -33,9 +46,8 @@ function registerHits(ctx: ModuleContext, lessons: Lesson[]): void {
 }
 
 export function resetBuffers(): void {
-  buffers.failures = [];
-  buffers.messages = [];
-  buffers.countedSessions = new Set();
+  buffers.clear();
+  countedSessions = new Set();
 }
 
 export const reflectionModule: OpenArkModule = {
@@ -48,23 +60,28 @@ export const reflectionModule: OpenArkModule = {
     }
   },
 
-  async onUserMessage(_ctx, message) {
+  async onUserMessage(ctx, message) {
     const text = message.text.trim();
-    if (!text || buffers.failures.length === 0) return;
-    if (buffers.messages.length >= MAX_BUFFERED) buffers.messages.shift();
-    buffers.messages.push(text);
+    const buf = bufferFor(ctx);
+    if (!text || buf.failures.length === 0) return;
+    if (buf.messages.length >= MAX_BUFFERED) buf.messages.shift();
+    buf.messages.push(text);
   },
 
-  async onToolResult(_ctx, result) {
+  async onToolResult(ctx, result) {
     if (result.ok) return;
-    if (buffers.failures.length >= MAX_BUFFERED) buffers.failures.shift();
-    buffers.failures.push(result);
+    const buf = bufferFor(ctx);
+    if (buf.failures.length >= MAX_BUFFERED) buf.failures.shift();
+    buf.failures.push(result);
   },
 
   async onSessionEnd(ctx) {
-    if (!buffers.failures.length && !buffers.messages.length) return;
-    const failures = buffers.failures.splice(0, buffers.failures.length);
-    const messages = buffers.messages.splice(0, buffers.messages.length);
+    const key = ctx.session?.id ?? "";
+    const buf = buffers.get(key);
+    if (!buf || (!buf.failures.length && !buf.messages.length)) return;
+    const failures = buf.failures.splice(0, buf.failures.length);
+    const messages = buf.messages.splice(0, buf.messages.length);
+    buffers.delete(key);
     await ctx.service
       .postJSON<ReflectResponse>(`/v1/agents/${ctx.agent}/lessons/reflect`, {
         failures: failures.map((f) => ({

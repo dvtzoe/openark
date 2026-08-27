@@ -72,6 +72,91 @@ Evict stale session buffers on `session.deleted` (the hook already exists —
 tracker — extend the same event to clear memory/reflection buffers for that
 session).
 
+### 1b. Deeper root cause found while implementing #1: `runtime.ts`'s single mutable "current agent" pointer, and `index.ts` binding tools to a stale startup-time context
+
+Found during the fix pass for #1, verified against the actual `@opencode-ai/plugin`/`sdk` type declarations (`node_modules/@opencode-ai/{plugin,sdk}/dist/**/*.d.ts`) before writing this up — not guessed:
+
+- `runtime.ts` keeps exactly **one** mutable slot, `current: Loaded | null`,
+  for "whichever agent was touched most recently," shared by every
+  concurrent session in the process. `hooks.ts`'s `createSessionTracker`
+  calls `runtime.switchAgent(agent)` — which reassigns `current` — on
+  **every** `chat.message`, `experimental.chat.system.transform`, and
+  `tool.execute.after` hook call, for any session. Two sessions on
+  different agents interleaving (any real multi-agent usage) can have
+  session A's `await mod.onUserMessage(current.ctx, ...)` read `current`
+  *after* session B's hook has already reassigned it out from under A —
+  `current` is read fresh from the closure on every loop iteration in
+  `onUserMessage`/`onToolResult`, not captured once, so this isn't
+  theoretical. This is the actual mechanism that made #1's buffer-sharing
+  bug possible in the first place (module singletons are one symptom; a
+  singleton "current agent" pointer is the underlying cause).
+- Separately, `index.ts`'s `collectTools(runtime)` runs **once**, at plugin
+  startup, and calls `mod.tools(ctx)` with whatever `runtime.ctx()` (i.e.
+  `current.ctx`) is *at that moment* — the default agent's context, since
+  no session has connected yet. Every tool's `execute` closure returned by
+  `mod.tools(ctx)` closes over that one `ctx` object permanently. Confirmed
+  by reading `@opencode-ai/plugin/dist/tool.d.ts`: the real `ToolContext`
+  opencode hands to `execute(args, context)` already carries `sessionID`
+  and `agent` — but `index.ts`'s own `ToolExecuteContext` only forwards
+  `directory`, discarding exactly the fields needed to route the call
+  correctly. Net effect: **every tool call in the whole plugin process
+  talks to the default agent**, never whichever agent the calling session
+  actually has active — `memory_search`/`memory_add`/`reflect`/etc. for a
+  non-default agent silently read/write the default agent's data. This is
+  a second, independent path to the same cross-agent leak #1 describes, and
+  arguably worse (100% of the time for any non-default agent, not just a
+  race window).
+
+**Revised draft fix (supersedes the runtime.ts part of #1's draft above):**
+Make `runtime.ts` resolve state per call instead of mutating a shared
+pointer:
+- Keep `loaded: Map<agentName, Loaded>` (module instances are legitimately
+  cacheable per agent — no change there).
+- Add `sessionAgent: Map<sessionID, agentName>`, replacing `switchAgent`
+  with `noteSession(sessionID, agentName)` (records the mapping, warms the
+  agent's module cache — no flush-on-switch needed anymore, see below) and
+  `forgetSession(sessionID)` (drops the mapping, called on
+  `session.deleted`).
+- Every dispatch method (`onUserMessage`, `onToolResult`, `onSessionEnd`,
+  `injections`, `agent`, `manifest`, `active`, `ctx`, `enabledModules`)
+  takes an optional `sessionID` and resolves the right `Loaded` entry fresh
+  on each call (falling back to the default agent if the session is
+  unknown — same degrade-gracefully behavior as today), building a
+  **fresh** `ModuleContext` with `session: {id: sessionID}` per call rather
+  than mutating a shared object. This removes the race by construction:
+  there is no longer a shared mutable "current," so there is nothing for a
+  second session to corrupt mid-await.
+- Dropping flush-on-switch is intentional, not an oversight: once buffers
+  are keyed by session (per #1's fix) rather than by "whichever agent is
+  current," there is nothing to flush when a session's agent changes — the
+  session's buffered content simply stays under its own key and flushes
+  whenever *that session* ends, attributed to whichever agent is current
+  for it at that point. Simpler than the old flush-on-switch special case,
+  and arguably more correct (a session's conversation isn't split across
+  two ingest calls just because the active agent changed mid-session).
+- `hooks.ts`'s `createSessionTracker`/`tracker.touch` becomes entirely
+  redundant once every runtime call resolves fresh per `sessionID` — delete
+  it, and delete the now-empty `tool.execute.after` hook (its only job was
+  `tracker.touch`; confirmed by reading `@opencode-ai/plugin`'s `Hooks`
+  type that this hook carries no other payload — `tool`, `sessionID`,
+  `callID`, `args` — nothing this codebase needs). This is itself a
+  readability win (`READABILITY.md` §1/§8): one less piece of duplicated,
+  now-provably-unnecessary state to reason about.
+- `index.ts`'s `collectTools` still enumerates tool **names/descriptions**
+  once at startup (those don't vary by agent), but each tool's `execute`
+  wrapper re-resolves the live `ModuleContext` via
+  `runtime.ctx(context.sessionID)` (using the `sessionID` opencode's own
+  `ToolContext` already provides) and re-derives that session's actual
+  tool list from it before invoking the matching tool by name. Rebuilding
+  a small array of closures per tool call is a micro-optimization tradeoff
+  explicitly acceptable per the owner's stated goal (readability/
+  correctness over micro-optimization) — no I/O is added, only object
+  allocation.
+- `toolFailure()` in `hooks.ts` should also surface `part.sessionID` (a
+  real field on `ToolPart`, confirmed in the SDK types) so the `event`
+  handler can pass the correct `sessionID` to `runtime.onToolResult`
+  instead of relying on the deleted touch-based bookkeeping.
+
 ## 2. Every tool hand-validates its own args with ad hoc `typeof`/`Array.isArray` checks instead of parsing once
 
 **Files:** all four — `memory.ts`, `personality.ts`, `reflection.ts`,

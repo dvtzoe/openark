@@ -11,14 +11,20 @@ function fakeService(overrides: Record<string, unknown> = {}): ServiceLike {
   } as unknown as ServiceLike;
 }
 
-function ctx(service: ServiceLike): ModuleContext {
+function ctx(service: ServiceLike, sessionID?: string): ModuleContext {
   const manifest: AgentManifest = {
     name: "defoko",
     description: "test",
     modules: { memory: true },
     channels: { subscriptions: [] },
   };
-  return { agent: "defoko", manifest, service, log: () => {} };
+  return {
+    agent: "defoko",
+    manifest,
+    service,
+    log: () => {},
+    ...(sessionID ? { session: { id: sessionID } } : {}),
+  };
 }
 
 beforeEach(() => {
@@ -71,6 +77,29 @@ describe("memoryModule", () => {
     expect(text.split("\n")).toHaveLength(200);
     expect(text.split("\n")[0]).toBe("user: msg 10");
     expect(text).toContain("user: msg 209");
+  });
+
+  it("keeps concurrent sessions' transcripts isolated", async () => {
+    const service = fakeService();
+    const sessionA = ctx(service, "session-a");
+    const sessionB = ctx(service, "session-b");
+
+    await memoryModule.onUserMessage?.(sessionA, { role: "user", text: "A's secret" });
+    await memoryModule.onUserMessage?.(sessionB, { role: "user", text: "B's secret" });
+    await memoryModule.onSessionEnd?.(sessionA);
+
+    expect(service.postJSON).toHaveBeenCalledTimes(1);
+    expect(service.postJSON).toHaveBeenCalledWith(
+      "/v1/agents/defoko/memory/ingest",
+      expect.objectContaining({ text: "user: A's secret" }),
+    );
+
+    await memoryModule.onSessionEnd?.(sessionB);
+    expect(service.postJSON).toHaveBeenCalledTimes(2);
+    expect(service.postJSON).toHaveBeenLastCalledWith(
+      "/v1/agents/defoko/memory/ingest",
+      expect.objectContaining({ text: "user: B's secret" }),
+    );
   });
 
   it("injects remembered facts", async () => {

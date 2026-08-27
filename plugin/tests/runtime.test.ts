@@ -83,7 +83,7 @@ describe("createRuntime", () => {
     expect(await runtime.injections()).toBe("");
   });
 
-  it("flushes the current agent before switching", async () => {
+  it("flushes a session when it ends, without disturbing other sessions", async () => {
     const service = fakeService({
       "/v1/agents/defoko": manifest({ memory: true }),
       "/v1/agents/observer": manifest({ memory: true }),
@@ -91,25 +91,47 @@ describe("createRuntime", () => {
     const mod = recordingModule("memory", true);
     const runtime = await createRuntime(deps(service, [mod]));
 
-    await runtime.onUserMessage("hi");
-    await runtime.switchAgent("observer");
+    await runtime.noteSession("s1", "defoko");
+    await runtime.noteSession("s2", "observer");
+    await runtime.onUserMessage("s1", "hi");
+    await runtime.onSessionEnd("s1");
     expect(mod.events).toEqual(["user", "end"]);
-    expect(runtime.agent()).toBe("observer");
+    expect(runtime.agent("s2")).toBe("observer");
   });
 
-  it("reuses a previously loaded agent without reloading", async () => {
+  it("does not re-read the manifest for repeat turns within the same session", async () => {
     const service = fakeService({ "/v1/agents/defoko": manifest({ memory: true }) });
     const runtime = await createRuntime(deps(service, []));
-    await runtime.switchAgent("defoko");
-    await runtime.switchAgent("defoko");
-    expect(service.calls.filter((c) => c === "/v1/agents/defoko")).toHaveLength(1);
+    const before = service.calls.filter((c) => c === "/v1/agents/defoko").length;
+    await runtime.noteSession("s1", "defoko");
+    await runtime.noteSession("s1", "defoko");
+    await runtime.noteSession("s1", "defoko");
+    const after = service.calls.filter((c) => c === "/v1/agents/defoko").length;
+    expect(after - before).toBe(1);
   });
 
-  it("switching to an unavailable agent keeps the previous one", async () => {
+  it("re-reads the manifest at each session's first turn, per MODULE_SPEC.md's " +
+    "'toggle at any time' contract", async () => {
     const service = fakeService({ "/v1/agents/defoko": manifest({ memory: true }) });
     const runtime = await createRuntime(deps(service, []));
-    await runtime.switchAgent("ghost");
-    expect(runtime.agent()).toBe("defoko");
+    const before = service.calls.filter((c) => c === "/v1/agents/defoko").length;
+    await runtime.noteSession("s1", "defoko");
+    await runtime.noteSession("s2", "defoko");
+    const after = service.calls.filter((c) => c === "/v1/agents/defoko").length;
+    expect(after - before).toBe(2);
+  });
+
+  it("an unknown session falls back to the default agent", async () => {
+    const service = fakeService({ "/v1/agents/defoko": manifest({ memory: true }) });
+    const runtime = await createRuntime(deps(service, []));
+    expect(runtime.agent("never-noted")).toBe("defoko");
+  });
+
+  it("noting a session for an unavailable agent falls back to the default", async () => {
+    const service = fakeService({ "/v1/agents/defoko": manifest({ memory: true }) });
+    const runtime = await createRuntime(deps(service, []));
+    await runtime.noteSession("s1", "ghost");
+    expect(runtime.agent("s1")).toBe("defoko");
   });
 
   it("dispatches user messages, tool results, and session end", async () => {
@@ -117,10 +139,55 @@ describe("createRuntime", () => {
     const mod = recordingModule("memory", true);
     const runtime = await createRuntime(deps(service, [mod]));
 
-    await runtime.onUserMessage("hello");
-    await runtime.onToolResult({ tool: "bash", ok: false, durationMs: 5, summary: "boom" });
-    await runtime.onSessionEnd();
+    await runtime.onUserMessage("s1", "hello");
+    await runtime.onToolResult("s1", { tool: "bash", ok: false, durationMs: 5, summary: "boom" });
+    await runtime.onSessionEnd("s1");
 
     expect(mod.events).toEqual(["user", "tool", "end"]);
+  });
+
+  it("keeps concurrent sessions on different agents fully isolated", async () => {
+    const service = fakeService({
+      "/v1/agents/defoko": manifest({ memory: true }),
+      "/v1/agents/observer": manifest({ memory: true }),
+    });
+    const defokoMod = recordingModule("memory", true);
+    const observerMod = recordingModule("memory", true);
+    // Two distinct module instances so each agent's dispatched events can be
+    // told apart, mirroring how `loaded` caches modules per agent name.
+    const runtime = await createRuntime({
+      defaultAgent: "defoko",
+      service,
+      loadModules: async (ctx) => (ctx.agent === "defoko" ? [defokoMod] : [observerMod]),
+      collectInjections: async () => "injected",
+      log: () => {},
+    });
+
+    await runtime.noteSession("s1", "defoko");
+    await runtime.noteSession("s2", "observer");
+    await runtime.onUserMessage("s1", "for defoko");
+    await runtime.onUserMessage("s2", "for observer");
+    await runtime.onSessionEnd("s1");
+    await runtime.onSessionEnd("s2");
+
+    expect(defokoMod.events).toEqual(["user", "end"]);
+    expect(observerMod.events).toEqual(["user", "end"]);
+  });
+
+  it("full shutdown (no sessionID) flushes every tracked session", async () => {
+    const service = fakeService({
+      "/v1/agents/defoko": manifest({ memory: true }),
+      "/v1/agents/observer": manifest({ memory: true }),
+    });
+    const mod = recordingModule("memory", true);
+    const runtime = await createRuntime(deps(service, [mod]));
+
+    await runtime.noteSession("s1", "defoko");
+    await runtime.noteSession("s2", "observer");
+    await runtime.onUserMessage("s1", "hi");
+    await runtime.onUserMessage("s2", "hi");
+    await runtime.onSessionEnd();
+
+    expect(mod.events).toEqual(["user", "user", "end", "end"]);
   });
 });

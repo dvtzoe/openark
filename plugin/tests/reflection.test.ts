@@ -109,6 +109,38 @@ describe("reflectionModule", () => {
     expect(service.postJSON).not.toHaveBeenCalled();
   });
 
+  it("keeps concurrent sessions' failure/message buffers isolated", async () => {
+    const service = fakeService();
+    const sessionA = ctx(service, "session-a");
+    const sessionB = ctx(service, "session-b");
+
+    await reflectionModule.onToolResult?.(sessionA, {
+      tool: "bash",
+      ok: false,
+      durationMs: 0,
+      summary: "A failed",
+    });
+    await reflectionModule.onToolResult?.(sessionB, {
+      tool: "bash",
+      ok: false,
+      durationMs: 0,
+      summary: "B failed",
+    });
+    await reflectionModule.onUserMessage?.(sessionA, { role: "user", text: "fix A" });
+
+    await reflectionModule.onSessionEnd?.(sessionA);
+    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/defoko/lessons/reflect", {
+      failures: [{ tool: "bash", ok: false, duration_ms: 0, summary: "A failed" }],
+      messages: ["fix A"],
+    });
+
+    await reflectionModule.onSessionEnd?.(sessionB);
+    expect(service.postJSON).toHaveBeenCalledWith("/v1/agents/defoko/lessons/reflect", {
+      failures: [{ tool: "bash", ok: false, duration_ms: 0, summary: "B failed" }],
+      messages: [],
+    });
+  });
+
   it("injects lessons and registers hits once per session", async () => {
     const service = fakeService({
       lessons: [

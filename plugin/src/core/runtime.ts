@@ -4,21 +4,20 @@ import type { ServiceLike } from "./types.js";
 export type RuntimeLogger = (level: "info" | "warn" | "error", message: string) => void;
 
 export type Runtime = {
-  agent(): string;
-  manifest(): AgentManifest | null;
-  active(): OpenArkModule[];
-  ctx(): ModuleContext | null;
-  switchAgent(name: string): Promise<void>;
-  onUserMessage(text: string): Promise<void>;
-  onToolResult(result: {
-    tool: string;
-    ok: boolean;
-    durationMs: number;
-    summary: string;
-  }): Promise<void>;
-  onSessionEnd(): Promise<void>;
+  agent(sessionID?: string): string;
+  manifest(sessionID?: string): AgentManifest | null;
+  active(sessionID?: string): OpenArkModule[];
+  ctx(sessionID?: string): ModuleContext | null;
+  noteSession(sessionID: string, agent: string): Promise<void>;
+  forgetSession(sessionID: string): void;
+  onUserMessage(sessionID: string, text: string): Promise<void>;
+  onToolResult(
+    sessionID: string,
+    result: { tool: string; ok: boolean; durationMs: number; summary: string },
+  ): Promise<void>;
+  onSessionEnd(sessionID?: string): Promise<void>;
   injections(sessionID?: string): Promise<string>;
-  enabledModules(): string[];
+  enabledModules(sessionID?: string): string[];
 };
 
 export type RuntimeDeps = {
@@ -35,9 +34,19 @@ type Loaded = {
   active: OpenArkModule[];
 };
 
+// Every session gets its own ModuleContext (built fresh per call by
+// withSession below) so that concurrent sessions on different agents can
+// never observe or mutate each other's state — see docs/plans/
+// 0003-findings-plugin-modules.md #1b for the cross-session race this
+// replaces (a single shared "current agent" pointer).
 export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
   const loaded = new Map<string, Loaded>();
-  let current: Loaded | null = null;
+  const sessionAgent = new Map<string, string>();
+  // Which (session, agent) pairs have already had their "session start"
+  // manifest read. MODULE_SPEC.md promises the manifest is re-read (so a
+  // module toggle takes effect) at session start, not cached for the whole
+  // plugin process — see docs/plans/0003-findings-plugin-core.md #2.
+  const sessionSeenAgents = new Map<string, Set<string>>();
 
   async function loadAgent(name: string): Promise<Loaded | null> {
     if (loaded.has(name)) return loaded.get(name) ?? null;
@@ -61,58 +70,93 @@ export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
     }
   }
 
-  current = await loadAgent(deps.defaultAgent);
+  const defaultLoaded = await loadAgent(deps.defaultAgent);
+
+  function resolve(sessionID?: string): Loaded | null {
+    const name = (sessionID && sessionAgent.get(sessionID)) || deps.defaultAgent;
+    return loaded.get(name) ?? defaultLoaded;
+  }
+
+  function withSession(entry: Loaded, sessionID?: string): ModuleContext {
+    return { ...entry.ctx, session: sessionID ? { id: sessionID } : undefined };
+  }
 
   return {
-    agent: () => current?.agent ?? deps.defaultAgent,
-    manifest: () => current?.ctx.manifest ?? null,
-    active: () => current?.active ?? [],
-    ctx: () => current?.ctx ?? null,
+    agent: (sessionID) => resolve(sessionID)?.agent ?? deps.defaultAgent,
+    manifest: (sessionID) => resolve(sessionID)?.ctx.manifest ?? null,
+    active: (sessionID) => resolve(sessionID)?.active ?? [],
+    ctx: (sessionID) => {
+      const entry = resolve(sessionID);
+      return entry ? withSession(entry, sessionID) : null;
+    },
+    enabledModules: (sessionID) => resolve(sessionID)?.active.map((m) => m.name) ?? [],
 
-    async switchAgent(name: string) {
-      if (!name || name === current?.agent) return;
-      if (current) await flush(current);
-      current = await loadAgent(name);
+    async noteSession(sessionID, agentName) {
+      if (!agentName) return;
+      sessionAgent.set(sessionID, agentName);
+      const seen = sessionSeenAgents.get(sessionID) ?? new Set<string>();
+      if (!seen.has(agentName)) {
+        seen.add(agentName);
+        sessionSeenAgents.set(sessionID, seen);
+        loaded.delete(agentName);
+      }
+      await loadAgent(agentName);
     },
 
-    async onUserMessage(text: string) {
-      if (!current) return;
-      for (const mod of current.active) {
-        await mod.onUserMessage?.(current.ctx, { role: "user", text });
+    forgetSession(sessionID) {
+      sessionAgent.delete(sessionID);
+      sessionSeenAgents.delete(sessionID);
+    },
+
+    async onUserMessage(sessionID, text) {
+      const entry = resolve(sessionID);
+      if (!entry) return;
+      const ctx = withSession(entry, sessionID);
+      for (const mod of entry.active) {
+        await mod.onUserMessage?.(ctx, { role: "user", text });
       }
     },
 
-    async onToolResult(result) {
-      if (!current) return;
-      for (const mod of current.active) {
-        await mod.onToolResult?.(current.ctx, result);
+    async onToolResult(sessionID, result) {
+      const entry = resolve(sessionID);
+      if (!entry) return;
+      const ctx = withSession(entry, sessionID);
+      for (const mod of entry.active) {
+        await mod.onToolResult?.(ctx, result);
       }
     },
 
-    async onSessionEnd() {
-      if (current) await flush(current);
-    },
-
-    async injections(sessionID?: string) {
-      if (!current) return "";
+    async onSessionEnd(sessionID) {
       if (sessionID) {
-        current.ctx.session = { id: sessionID };
-      } else {
-        current.ctx.session = undefined;
+        const entry = resolve(sessionID);
+        if (entry) await flush(entry, withSession(entry, sessionID));
+        sessionAgent.delete(sessionID);
+        return;
       }
-      return deps.collectInjections(current.active, current.ctx);
+      // No sessionID means the whole plugin process is shutting down
+      // (opencode's `dispose` hook): flush every session still tracked,
+      // each against its own agent, instead of guessing at one "current".
+      for (const [sid, agentName] of sessionAgent) {
+        const entry = loaded.get(agentName);
+        if (entry) await flush(entry, withSession(entry, sid));
+      }
+      sessionAgent.clear();
     },
 
-    enabledModules: () => current?.active.map((m) => m.name) ?? [],
+    async injections(sessionID) {
+      const entry = resolve(sessionID);
+      if (!entry) return "";
+      return deps.collectInjections(entry.active, withSession(entry, sessionID));
+    },
   };
 }
 
-async function flush(entry: Loaded): Promise<void> {
+async function flush(entry: Loaded, ctx: ModuleContext): Promise<void> {
   try {
     for (const mod of entry.active) {
-      await mod.onSessionEnd?.(entry.ctx);
+      await mod.onSessionEnd?.(ctx);
     }
   } catch (err) {
-    entry.ctx.log("warn", `session flush failed: ${String(err)}`);
+    ctx.log("warn", `session flush failed: ${String(err)}`);
   }
 }

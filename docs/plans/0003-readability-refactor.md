@@ -172,6 +172,23 @@ fixes that depend on them):**
 (15–23 map to the remaining minor findings in each doc, referenced there by
 number.)
 
+## Owner decisions (2026-08-28)
+
+Asked before starting the fix phase, in a fresh session picking this plan
+back up. Answers, verbatim intent preserved:
+
+1. **Priority order** (the four tiers above) — approved as-is. Start Tier 1
+   item 1, work down.
+2. **Python type checker choice** (Tier 2 #6) — **basedpyright**, not
+   pyright or mypy. (Owner's pick; not independently justified beyond the
+   choice itself — basedpyright is a strict-by-default pyright fork with
+   more diagnostics enabled out of the box.)
+3. **Autonomy level** — work through tiers continuously in this session: one
+   commit per verified fix (`make test && make lint` green first), update
+   this log after every step, only stop to report at natural checkpoints or
+   when context/rate limits force it. Do not stop after every tier or every
+   commit to ask permission.
+
 ## Log
 
 Newest entry last. Each entry: date, what was done, what's next.
@@ -298,3 +315,62 @@ Newest entry last. Each entry: date, what was done, what's next.
   then begin with Tier 1 item 1 (or wherever the owner redirects), one
   commit per verified fix (`make test && make lint` green before each
   commit), updating this log after every step.
+
+### 2026-08-28 — Owner review; fix phase starts (Tier 1 #1 + #4)
+
+- Owner reviewed the priority order and approved it as-is (see "Owner
+  decisions" above). Picked **basedpyright** for the Tier 2 Python type
+  checker. Approved working through tiers continuously rather than
+  stopping after every commit.
+- Started Tier 1 item 1 (cross-agent/cross-session buffer leak). While
+  reading the actual code to draft the fix, found the root cause is bigger
+  than the original audit described: `runtime.ts` kept a single mutable
+  "current agent" pointer shared by every concurrent session (not just the
+  two buffer singletons), and `index.ts`'s `collectTools` bound every
+  tool's `execute` to whichever agent's context existed at plugin startup —
+  verified against the real `@opencode-ai/plugin`/`sdk` type declarations
+  that `ToolContext`/hook inputs already carry `sessionID` (and `agent`)
+  that the plugin just wasn't using. Documented as finding **1b** in
+  `0003-findings-plugin-modules.md` with the revised draft fix, since the
+  owner's process requires drafting in natural language before fixing —
+  this was written up before any code changed.
+- **Implemented** (one cohesive change, since #1 and #1b share the same
+  root cause and the fix docs said to do the runtime.ts parts together):
+  - `runtime.ts`: replaced the single mutable `current` pointer with
+    per-call resolution keyed by `sessionID` (`resolve()` +
+    `withSession()`), building a fresh `ModuleContext` per call instead of
+    mutating a shared one. Replaced `switchAgent` with
+    `noteSession`/`forgetSession`. `loaded` (per-agent module cache) stays,
+    since module instances are legitimately cacheable per agent.
+  - Folded in **Tier 1 #4** (manifest cached for the process lifetime,
+    contradicting `MODULE_SPEC.md`'s "toggle at any time... reads the
+    manifest at session start") while already restructuring this file:
+    verified first that all four modules' `init()` is a cheap, idempotent
+    health check (safe to re-run), then added `sessionSeenAgents` so the
+    manifest+module set is re-read the first time *each session* touches
+    an agent, not cached for the whole plugin process.
+  - `hooks.ts`: deleted `createSessionTracker`/`tracker.touch` (redundant
+    now that every runtime call resolves fresh per `sessionID`) and the
+    now-empty `tool.execute.after` hook. `toolFailure()` now surfaces
+    `part.sessionID` (a real `ToolPart` field) so tool-failure events route
+    to the right session.
+  - `index.ts`: `collectTools` still enumerates tool names/descriptions
+    once at startup, but each tool's `execute` re-resolves the live
+    `ModuleContext` via `runtime.ctx(context.sessionID)` — using the
+    `sessionID` opencode's own `ToolContext` already provides — before
+    invoking the matching tool, instead of closing over a stale
+    startup-time context.
+  - `memory.ts`/`reflection.ts`: buffers changed from module-scope
+    singletons to `Map<sessionID, ...>`, per the original #1 draft.
+  - Tests updated/added in `runtime.test.ts`, `hooks.test.ts`,
+    `memory.test.ts`, `reflection.test.ts` — including new cross-session
+    isolation tests and manifest re-read tests (owner approved expanding
+    coverage, not just preserving it).
+- Verified: `npm run build` (tsc, no errors), `npx vitest run` (107/107
+  passing), `npx biome check src tests` (clean after one auto-format fix),
+  `scripts/check_file_sizes.sh` (all files still ≤999 lines; largest
+  touched file is now `reflection.ts` at 162 lines).
+- **Next:** Tier 1 item 2 (no timeout on `getJSON`/`postJSON` in
+  `plugin/src/core/service.ts` — a hung service can hang a session), then
+  item 3 (the "one corrupted file breaks listing everything" pattern,
+  3 occurrences across the Python service).

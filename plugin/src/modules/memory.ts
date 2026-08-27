@@ -15,7 +15,10 @@ function provenanceLine(m: MemoryItem): string {
 
 const MAX_BUFFERED_MESSAGES = 200;
 
-const transcript: string[] = [];
+// Keyed by session, not a single shared array: two concurrent sessions
+// (same or different agent) must never see each other's buffered
+// transcript. See docs/plans/0003-findings-plugin-modules.md #1.
+const transcripts = new Map<string, string[]>();
 
 function currentProject(directory?: string): string | undefined {
   try {
@@ -26,7 +29,7 @@ function currentProject(directory?: string): string | undefined {
 }
 
 function resetTranscript(): void {
-  transcript.length = 0;
+  transcripts.clear();
 }
 
 export const memoryModule: OpenArkModule = {
@@ -39,17 +42,22 @@ export const memoryModule: OpenArkModule = {
     }
   },
 
-  async onUserMessage(_ctx, message) {
+  async onUserMessage(ctx, message) {
     const text = message.text.trim();
     if (!text) return;
+    const key = ctx.session?.id ?? "";
+    const transcript = transcripts.get(key) ?? [];
     if (transcript.length >= MAX_BUFFERED_MESSAGES) transcript.shift();
     transcript.push(`user: ${text}`);
+    transcripts.set(key, transcript);
   },
 
   async onSessionEnd(ctx) {
-    if (!transcript.length) return;
+    const key = ctx.session?.id ?? "";
+    const transcript = transcripts.get(key);
+    if (!transcript?.length) return;
     const conversation = transcript.join("\n");
-    resetTranscript();
+    transcripts.delete(key);
     const project = currentProject();
     await ctx.service
       .postJSON<IngestResponse>(`/v1/agents/${ctx.agent}/memory/ingest`, {

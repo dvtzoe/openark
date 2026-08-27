@@ -1,37 +1,49 @@
 import type { Part } from "@opencode-ai/sdk";
 import { describe, expect, it, vi } from "vitest";
-import { buildHooks, createSessionTracker, toolFailure, userText } from "../src/core/hooks";
+import { buildHooks, toolFailure, userText } from "../src/core/hooks";
 import type { Runtime } from "../src/core/runtime";
 
 function fakeRuntime(): Runtime & {
+  notedSessions: Array<[string, string]>;
+  forgottenSessions: string[];
   userMessages: string[];
   toolResults: unknown[];
-  ends: number;
+  ends: string[];
   injectionsText: string;
 } {
   return {
+    notedSessions: [],
+    forgottenSessions: [],
     userMessages: [],
     toolResults: [],
-    ends: 0,
+    ends: [],
     injectionsText: "## Persona\nwarm",
     agent: () => "defoko",
     manifest: () => null,
     active: () => [],
     ctx: () => null,
-    switchAgent: vi.fn(async () => {}),
-    onUserMessage: vi.fn(async function (this: never, text: string) {
+    enabledModules: () => ["memory"],
+    noteSession: vi.fn(async function (this: never, sessionID: string, agent: string) {
+      (this as unknown as { notedSessions: Array<[string, string]> }).notedSessions.push([
+        sessionID,
+        agent,
+      ]);
+    }),
+    forgetSession: vi.fn(function (this: never, sessionID: string) {
+      (this as unknown as { forgottenSessions: string[] }).forgottenSessions.push(sessionID);
+    }),
+    onUserMessage: vi.fn(async function (this: never, _sessionID: string, text: string) {
       (this as unknown as { userMessages: string[] }).userMessages.push(text);
     }),
-    onToolResult: vi.fn(async function (this: never, result: unknown) {
+    onToolResult: vi.fn(async function (this: never, _sessionID: string, result: unknown) {
       (this as unknown as { toolResults: unknown[] }).toolResults.push(result);
     }),
-    onSessionEnd: vi.fn(async function (this: never) {
-      (this as unknown as { ends: number }).ends += 1;
+    onSessionEnd: vi.fn(async function (this: never, sessionID?: string) {
+      (this as unknown as { ends: string[] }).ends.push(sessionID ?? "(all)");
     }),
     injections: vi.fn(async function (this: never) {
       return (this as unknown as { injectionsText: string }).injectionsText;
     }),
-    enabledModules: () => ["memory"],
   } as unknown as ReturnType<typeof fakeRuntime>;
 }
 
@@ -39,8 +51,8 @@ function textPart(text: string): Part {
   return { type: "text", text } as Part;
 }
 
-function toolPart(state: Record<string, unknown>): Part {
-  return { type: "tool", tool: "bash", state } as unknown as Part;
+function toolPart(state: Record<string, unknown>, sessionID = "s1"): Part {
+  return { type: "tool", tool: "bash", sessionID, state } as unknown as Part;
 }
 
 describe("userText", () => {
@@ -55,15 +67,27 @@ describe("userText", () => {
 
 describe("toolFailure", () => {
   it("extracts errors from tool parts", () => {
-    const failure = toolFailure(toolPart({ status: "error", error: "exit 1" }));
-    expect(failure).toEqual({ tool: "bash", ok: false, durationMs: 0, summary: "exit 1" });
+    const failure = toolFailure(toolPart({ status: "error", error: "exit 1" }, "s1"));
+    expect(failure).toEqual({
+      tool: "bash",
+      ok: false,
+      durationMs: 0,
+      summary: "exit 1",
+      sessionID: "s1",
+    });
   });
 
   it("computes duration for completed tools", () => {
     const failure = toolFailure(
-      toolPart({ status: "completed", output: "done", time: { start: 1000, end: 1500 } }),
+      toolPart({ status: "completed", output: "done", time: { start: 1000, end: 1500 } }, "s1"),
     );
-    expect(failure).toEqual({ tool: "bash", ok: true, durationMs: 500, summary: "done" });
+    expect(failure).toEqual({
+      tool: "bash",
+      ok: true,
+      durationMs: 500,
+      summary: "done",
+      sessionID: "s1",
+    });
   });
 
   it("ignores running and pending tools", () => {
@@ -76,29 +100,8 @@ describe("toolFailure", () => {
   });
 });
 
-describe("createSessionTracker", () => {
-  it("maps sessions to agents and switches", async () => {
-    const runtime = fakeRuntime();
-    const tracker = createSessionTracker(runtime);
-    await tracker.note("s1", "observer");
-    expect(runtime.switchAgent).toHaveBeenCalledWith("observer");
-    await tracker.touch("s1");
-    expect(runtime.switchAgent).toHaveBeenCalledTimes(2);
-    tracker.forget("s1");
-    await tracker.touch("s1");
-    expect(runtime.switchAgent).toHaveBeenCalledTimes(2);
-  });
-
-  it("touch without a mapping does nothing", async () => {
-    const runtime = fakeRuntime();
-    const tracker = createSessionTracker(runtime);
-    await tracker.touch("unknown");
-    expect(runtime.switchAgent).not.toHaveBeenCalled();
-  });
-});
-
 describe("buildHooks", () => {
-  it("routes user messages through chat.message", async () => {
+  it("routes user messages through chat.message, noting the session's agent first", async () => {
     const runtime = fakeRuntime();
     const hooks = buildHooks(runtime);
     await hooks["chat.message"]?.(
@@ -108,6 +111,7 @@ describe("buildHooks", () => {
         parts: [textPart("hello")],
       },
     );
+    expect(runtime.notedSessions).toEqual([["s1", "defoko"]]);
     expect(runtime.userMessages).toEqual(["hello"]);
   });
 
@@ -145,11 +149,11 @@ describe("buildHooks", () => {
     await hooks.event?.({
       event: {
         type: "message.part.updated",
-        properties: { part: toolPart({ status: "error", error: "exit 2" }) },
+        properties: { part: toolPart({ status: "error", error: "exit 2" }, "s1") },
       },
     });
     expect(runtime.toolResults).toEqual([
-      { tool: "bash", ok: false, durationMs: 0, summary: "exit 2" },
+      { tool: "bash", ok: false, durationMs: 0, summary: "exit 2", sessionID: "s1" },
     ]);
   });
 
@@ -165,18 +169,27 @@ describe("buildHooks", () => {
     expect(runtime.toolResults).toEqual([]);
   });
 
-  it("flushes on session.idle", async () => {
+  it("flushes only the idle session on session.idle", async () => {
     const runtime = fakeRuntime();
     const hooks = buildHooks(runtime);
     await hooks.event?.({ event: { type: "session.idle", properties: { sessionID: "s1" } } });
-    expect(runtime.ends).toBe(1);
+    expect(runtime.ends).toEqual(["s1"]);
   });
 
-  it("flushes on dispose", async () => {
+  it("forgets a session on session.deleted", async () => {
+    const runtime = fakeRuntime();
+    const hooks = buildHooks(runtime);
+    await hooks.event?.({
+      event: { type: "session.deleted", properties: { info: { id: "s1" } } },
+    });
+    expect(runtime.forgottenSessions).toEqual(["s1"]);
+  });
+
+  it("flushes every session on dispose", async () => {
     const runtime = fakeRuntime();
     const hooks = buildHooks(runtime);
     await hooks.dispose?.();
-    expect(runtime.ends).toBe(1);
+    expect(runtime.ends).toEqual(["(all)"]);
   });
 
   it("registers tools when provided", () => {
