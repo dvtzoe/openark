@@ -21,7 +21,8 @@ def test_mem0_roundtrip(tmp_path, module):
     (home / "data").mkdir()
 
     added = module.add(home, "defoko", "User's favorite editor is neovim.")
-    assert added["event"] == "ADD"
+    assert added is not None
+    assert added.event == "ADD"
 
     module.add(home, "defoko", "User dislikes tabs and prefers spaces.")
 
@@ -38,5 +39,7 @@ def test_mem0_ingest_without_llm_is_noop(tmp_path, module):
     home.mkdir(parents=True)
     (home / "data").mkdir()
     result = module.ingest(home, "defoko", "user: I use vitest")
-    assert result == {"added": 0, "facts": [], "reason": "no-model"}
+    assert result.added == 0
+    assert result.facts == []
+    assert result.reason == "no-model"
     assert module.recall(home, "defoko", q="", limit=5) == []

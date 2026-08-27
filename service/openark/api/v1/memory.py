@@ -78,7 +78,7 @@ def add_memory(
     result = module.add(agent_home, name, request.text, project=request.project)
     if result is None:
         raise HTTPException(status_code=502, detail="memory write failed")
-    return MemoryMutation(id=str(result.get("id", "")), event=str(result.get("event", "ADD")))
+    return result
 
 
 @router.post("/agents/{name}/memory/ingest", response_model=MemoryIngestResponse)
@@ -90,6 +90,4 @@ def ingest(
 ):
     agent_home = _require_agent(registry, name)
     module = _require_module(module, registry)
-    return MemoryIngestResponse(
-        **module.ingest(agent_home, name, request.text, project=request.project)
-    )
+    return module.ingest(agent_home, name, request.text, project=request.project)

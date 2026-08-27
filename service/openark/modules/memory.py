@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ..core.llm import LlmUnavailable, TaskRunner, resolve_route
-from ..core.models import MemoryItem
+from ..core.models import MemoryIngestResponse, MemoryItem, MemoryMutation
 from ..core.prompts import PromptSpec, load_prompt, render
 from ..core.registry import AgentRegistry
 
@@ -168,14 +168,14 @@ class MemoryModule:
 
     def add(
         self, agent_home: Path, agent: str, text: str, project: str | None = None
-    ) -> dict[str, Any] | None:
+    ) -> MemoryMutation | None:
         store = self._store(agent_home)
         metadata = {"source": "manual"}
         if project:
             metadata["project"] = project
         infer = self._llm_available()
         try:
-            return store.add(agent, text, metadata, infer=infer)
+            result = store.add(agent, text, metadata, infer=infer)
         except Exception as err:
             # Same degrade-to-no-op contract as ingest()'s store.add() call
             # below: api/v1/memory.py's add_memory already treats a None
@@ -183,25 +183,28 @@ class MemoryModule:
             # without needing a new error shape.
             logger.warning("memory add write failed for %s: %s", agent, err)
             return None
+        if result is None:
+            return None
+        return MemoryMutation(id=str(result.get("id", "")), event=str(result.get("event", "ADD")))
 
     def ingest(
         self, agent_home: Path, agent: str, conversation: str, project: str | None = None
-    ) -> dict[str, Any]:
+    ) -> MemoryIngestResponse:
         if not self._llm_available():
-            return {"added": 0, "facts": [], "reason": "no-model"}
+            return MemoryIngestResponse(reason="no-model")
         prompt = render(
             self._extraction(), conversation=conversation.strip() or "(empty conversation)"
         )
         try:
             output = self._runner.complete("extraction", prompt) if self._runner else ""
         except LlmUnavailable as err:
-            return {"added": 0, "facts": [], "reason": f"no-model: {err}"}
+            return MemoryIngestResponse(reason=f"no-model: {err}")
         except Exception as err:
             logger.warning("extraction failed: %s", err)
-            return {"added": 0, "facts": [], "reason": "llm-error"}
+            return MemoryIngestResponse(reason="llm-error")
         facts = _parse_facts(output)
         if not facts:
-            return {"added": 0, "facts": [], "reason": "no-facts"}
+            return MemoryIngestResponse(reason="no-facts")
         store = self._store(agent_home)
         metadata = {"source": "extraction"}
         if project:
@@ -210,9 +213,9 @@ class MemoryModule:
             result = store.add(agent, facts, metadata, infer=True)
         except Exception as err:
             logger.warning("memory ingest write failed for %s: %s", agent, err)
-            return {"added": 0, "facts": facts, "reason": "store-error"}
+            return MemoryIngestResponse(facts=facts, reason="store-error")
         added = len(result.get("results", [])) if isinstance(result, dict) else 1
-        return {"added": added, "facts": facts}
+        return MemoryIngestResponse(added=added, facts=facts)
 
 
 def _parse_facts(output: str) -> list[str]:

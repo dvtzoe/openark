@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from openark.core.llm import LlmUnavailable
+from openark.core.models import MemoryIngestResponse
 from openark.modules.memory import MemoryModule, _keyword_rerank, _parse_facts
 
 
@@ -78,7 +79,8 @@ def test_add_stores_with_source_manual():
     store = FakeStore()
     module = make_module(store, runner=FakeRunner())
     result = module.add(HOME, "defoko", "likes neovim", project="openark")
-    assert result["id"] == "m1"
+    assert result is not None
+    assert result.id == "m1"
     assert store.adds[0]["metadata"] == {"source": "manual", "project": "openark"}
     assert store.adds[0]["infer"] is True
 
@@ -110,7 +112,7 @@ def test_ingest_with_unavailable_route_is_noop():
     runner = FakeRunner(available=False)
     module = make_module(store, runner=runner)
     result = module.ingest(HOME, "defoko", "user: hello")
-    assert result == {"added": 0, "facts": [], "reason": "no-model"}
+    assert result == MemoryIngestResponse(added=0, facts=[], reason="no-model")
     assert runner.calls == []
 
 
@@ -133,8 +135,8 @@ def test_ingest_store_write_error_degrades():
     store.add = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))  # type: ignore[assignment]
     module = make_module(store, runner=FakeRunner())
     result = module.ingest(HOME, "defoko", "user: hi")
-    assert result["reason"] == "store-error"
-    assert result["facts"]
+    assert result.reason == "store-error"
+    assert result.facts
     store.add = original_add
 
 
@@ -143,8 +145,8 @@ def test_ingest_extracts_and_batches_facts():
     runner = FakeRunner()
     module = make_module(store, runner=runner)
     result = module.ingest(HOME, "defoko", "user: I love vitest", project="openark")
-    assert result["added"] == 2
-    assert result["facts"] == ["User works in TypeScript", "User has a dog"]
+    assert result.added == 2
+    assert result.facts == ["User works in TypeScript", "User has a dog"]
     assert runner.calls[0][0] == "extraction"
     assert "I love vitest" in runner.calls[0][1]
     batch = store.adds[0]
@@ -157,7 +159,7 @@ def test_ingest_without_llm_is_noop():
     store = FakeStore()
     module = make_module(store, runner=None)
     result = module.ingest(HOME, "defoko", "user: I love vitest")
-    assert result["added"] == 0
+    assert result.added == 0
     assert store.adds == []
 
 
@@ -165,22 +167,22 @@ def test_ingest_llm_unavailable_degrades():
     store = FakeStore()
     module = make_module(store, runner=FakeRunner(fail=LlmUnavailable("no route")))
     result = module.ingest(HOME, "defoko", "user: hi")
-    assert result["added"] == 0
-    assert result["reason"] and result["reason"].startswith("no-model")
+    assert result.added == 0
+    assert result.reason and result.reason.startswith("no-model")
 
 
 def test_ingest_llm_error_degrades():
     store = FakeStore()
     module = make_module(store, runner=FakeRunner(fail=RuntimeError("boom")))
     result = module.ingest(HOME, "defoko", "user: hi")
-    assert result == {"added": 0, "facts": [], "reason": "llm-error"}
+    assert result == MemoryIngestResponse(added=0, facts=[], reason="llm-error")
 
 
 def test_ingest_no_facts():
     store = FakeStore()
     module = make_module(store, runner=FakeRunner(output=""))
     result = module.ingest(HOME, "defoko", "user: hi")
-    assert result["reason"] == "no-facts"
+    assert result.reason == "no-facts"
 
 
 def test_parse_facts_strips_bullets_and_caps():
