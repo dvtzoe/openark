@@ -61,10 +61,10 @@ def test_reflect_adds_rules_with_provenance(registry):
         failures=[{"tool": "bash", "summary": "exit 1: lint errors"}],
         messages=["no, use ruff not black"],
     )
-    assert result.get("reason") is None
-    rules = [e["rule"] for e in result["added"]]
+    assert result.reason is None
+    rules = [e.rule for e in result.added]
     assert rules == ["Run `make lint` before every commit", "Never force-push to main"]
-    assert all(e["source"] == "reflection:bash" for e in result["added"])
+    assert all(e.source == "reflection:bash" for e in result.added)
 
     entries = module.list(registry.agent_home("defoko"))
     assert len(entries) == 2
@@ -84,34 +84,34 @@ def test_reflect_correction_only_uses_correction_source(registry):
     result = module.reflect(
         registry, "defoko", failures=[], messages=["don't delete without asking"]
     )
-    assert result["added"][0]["source"] == "reflection:correction"
+    assert result.added[0].source == "reflection:correction"
 
 
 def test_reflect_nothing_to_reflect(registry):
     module = make_module(FakeRunner())
     result = module.reflect(registry, "defoko", failures=[], messages=[])
-    assert result["reason"] == "nothing-to-reflect"
+    assert result.reason == "nothing-to-reflect"
 
 
 def test_reflect_without_model(registry):
     module = make_module(None)
     result = module.reflect(registry, "defoko", failures=[{"tool": "bash", "summary": "x"}])
-    assert result["reason"] == "no-model"
+    assert result.reason == "no-model"
 
 
 def test_reflect_no_rules_extracted(registry):
     module = make_module(FakeRunner(output="nothing generalizes here"))
     result = module.reflect(registry, "defoko", failures=[{"tool": "bash", "summary": "x"}])
-    assert result["reason"] == "no-rules"
+    assert result.reason == "no-rules"
 
 
 def test_reflect_dedupes_existing_rules(registry):
     module = make_module(FakeRunner(output="RULE: Run `make lint` before every commit\n"))
     module.add(registry, "defoko", "Run `make lint` before every commit")
     result = module.reflect(registry, "defoko", failures=[{"tool": "bash", "summary": "x"}])
-    assert result["added"] == []
-    assert result["skipped"] == 1
-    assert result["reason"] == "duplicate"
+    assert result.added == []
+    assert result.skipped == 1
+    assert result.reason == "duplicate"
     assert len(module.list(registry.agent_home("defoko"))) == 1
 
 
@@ -122,7 +122,7 @@ def test_reflect_reinstates_retired_rules(registry):
     module.retire(registry, "defoko", entry_id)
 
     result = module.reflect(registry, "defoko", failures=[{"tool": "bash", "summary": "x"}])
-    assert len(result["added"]) == 1
+    assert len(result.added) == 1
     entries = module.list(registry.agent_home("defoko"), active_only=False)
     assert entries[0].status == "active"
 
@@ -130,14 +130,15 @@ def test_reflect_reinstates_retired_rules(registry):
 def test_add_manual_lesson(registry):
     module = make_module(FakeRunner())
     result = module.add(registry, "defoko", "Always write tests first")
-    assert result["added"]["source"] == "manual"
+    assert result.added is not None
+    assert result.added.source == "manual"
     duplicate = module.add(registry, "defoko", "Always write tests first")
-    assert duplicate["reason"] == "duplicate"
+    assert duplicate.reason == "duplicate"
 
 
 def test_retire_unknown_lesson(registry):
     module = make_module(FakeRunner())
-    assert module.retire(registry, "defoko", "deadbeef")["reason"] == "not-found"
+    assert module.retire(registry, "defoko", "deadbeef").reason == "not-found"
 
 
 def test_hits_lifecycle_and_retirement(registry):
@@ -148,11 +149,11 @@ def test_hits_lifecycle_and_retirement(registry):
     unused_id = lesson_id("Never used")
 
     result = module.register_hits(registry, "defoko", [popular_id], "s1")
-    assert result["counted"] is True
-    assert result["retired"] == []
+    assert result.counted is True
+    assert result.retired == []
 
     again = module.register_hits(registry, "defoko", [popular_id], "s1")
-    assert again["counted"] is False
+    assert again.counted is False
 
     for i in range(RETIRE_AFTER_STALE_SESSIONS):
         module.register_hits(registry, "defoko", [popular_id], f"s{i + 2}")
@@ -192,4 +193,4 @@ def test_normalize_rule_ignores_punctuation():
 def test_reflect_llm_error_degrades(registry):
     module = make_module(FakeRunner(fail=RuntimeError("boom")))
     result = module.reflect(registry, "defoko", failures=[{"tool": "bash", "summary": "x"}])
-    assert result["reason"] == "llm-error"
+    assert result.reason == "llm-error"

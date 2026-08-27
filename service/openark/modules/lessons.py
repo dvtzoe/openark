@@ -9,6 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from ..core.llm import LlmUnavailable, TaskRunner
+from ..core.models import (
+    LessonAddResponse,
+    LessonHitsResponse,
+    LessonPayload,
+    LessonRetireResponse,
+    ReflectResponse,
+)
 from ..core.prompts import PromptSpec, load_prompt, render
 from ..core.registry import AgentRegistry
 
@@ -78,7 +85,7 @@ class LessonsModule:
         agent: str,
         failures: list[dict[str, Any]],
         messages: list[str] | None = None,
-    ) -> dict[str, Any]:
+    ) -> ReflectResponse:
         messages = [m for m in (messages or []) if m.strip()]
         failure_lines = []
         for failure in failures:
@@ -87,10 +94,10 @@ class LessonsModule:
             if summary:
                 failure_lines.append(f"- {tool}: {summary}")
         if not failure_lines and not messages:
-            return {"added": [], "skipped": 0, "reason": "nothing-to-reflect"}
+            return ReflectResponse(reason="nothing-to-reflect")
 
         if self._runner is None or not self._runner.available("reflection"):
-            return {"added": [], "skipped": 0, "reason": "no-model"}
+            return ReflectResponse(reason="no-model")
 
         parsed = _parse(registry.agent_home(agent) / "lessons.md")
         existing_rules = "\n".join(f"- {entry.rule}" for entry in parsed.lessons) or "(none yet)"
@@ -103,14 +110,14 @@ class LessonsModule:
         try:
             output = self._runner.complete("reflection", prompt)
         except LlmUnavailable as err:
-            return {"added": [], "skipped": 0, "reason": f"no-model: {err}"}
+            return ReflectResponse(reason=f"no-model: {err}")
         except Exception as err:
             logger.warning("reflection failed: %s", err)
-            return {"added": [], "skipped": 0, "reason": "llm-error"}
+            return ReflectResponse(reason="llm-error")
 
         rules = _parse_rules(output)
         if not rules:
-            return {"added": [], "skipped": 0, "reason": "no-rules"}
+            return ReflectResponse(reason="no-rules")
 
         source = _source_for(failures, messages)
         added: list[LessonEntry] = []
@@ -131,36 +138,38 @@ class LessonsModule:
             added.append(entry)
 
         if not added:
-            return {"added": [], "skipped": skipped, "reason": "duplicate"}
+            return ReflectResponse(skipped=skipped, reason="duplicate")
         _write(registry.agent_home(agent) / "lessons.md", parsed)
         for entry in added:
             registry.audit(agent, "lesson.add", entry.render())
-        return {"added": [_entry_dict(e) for e in added], "skipped": skipped}
+        return ReflectResponse(added=[_payload(e) for e in added], skipped=skipped)
 
     def add(
         self, registry: AgentRegistry, agent: str, rule: str, source: str = "manual"
-    ) -> dict[str, Any]:
+    ) -> LessonAddResponse:
         rule = rule.strip()
         if not rule:
             raise ValueError("rule must not be empty")
         parsed = _parse(registry.agent_home(agent) / "lessons.md")
         entry = LessonEntry(id=lesson_id(rule), rule=rule, source=source)
         if _find_by_id(parsed.lessons, entry.id) is not None:
-            return {"added": None, "reason": "duplicate"}
+            return LessonAddResponse(added=None, reason="duplicate")
         parsed.lessons.append(entry)
         _write(registry.agent_home(agent) / "lessons.md", parsed)
         registry.audit(agent, "lesson.add", entry.render())
-        return {"added": _entry_dict(entry), "reason": None}
+        return LessonAddResponse(added=_payload(entry), reason=None)
 
-    def retire(self, registry: AgentRegistry, agent: str, lesson_id_value: str) -> dict[str, Any]:
+    def retire(
+        self, registry: AgentRegistry, agent: str, lesson_id_value: str
+    ) -> LessonRetireResponse:
         parsed = _parse(registry.agent_home(agent) / "lessons.md")
         entry = _find_by_id(parsed.lessons, lesson_id_value)
         if entry is None:
-            return {"retired": False, "reason": "not-found"}
+            return LessonRetireResponse(retired=False, reason="not-found")
         entry.status = "retired"
         _write(registry.agent_home(agent) / "lessons.md", parsed)
         registry.audit(agent, "lesson.retire", entry.render())
-        return {"retired": True, "reason": None}
+        return LessonRetireResponse(retired=True, reason=None)
 
     def register_hits(
         self,
@@ -168,11 +177,11 @@ class LessonsModule:
         agent: str,
         ids: list[str],
         session_id: str,
-    ) -> dict[str, Any]:
+    ) -> LessonHitsResponse:
         agent_home = registry.agent_home(agent)
         state = _load_state(agent_home)
         if session_id in state["seen"]:
-            return {"counted": False, "retired": []}
+            return LessonHitsResponse(counted=False, retired=[])
         state["seen"].append(session_id)
         state["seen"] = state["seen"][-MAX_REMEMBERED_SESSIONS:]
 
@@ -191,17 +200,17 @@ class LessonsModule:
                     registry.audit(agent, "lesson.retire", entry.render())
         _write(agent_home / "lessons.md", parsed)
         _save_state(agent_home, state)
-        return {"counted": True, "retired": retired}
+        return LessonHitsResponse(counted=True, retired=retired)
 
 
-def _entry_dict(entry: LessonEntry) -> dict[str, Any]:
-    return {
-        "id": entry.id,
-        "rule": entry.rule,
-        "status": entry.status,
-        "source": entry.source,
-        "hits": entry.hits,
-    }
+def _payload(entry: LessonEntry) -> LessonPayload:
+    return LessonPayload(
+        id=entry.id,
+        rule=entry.rule,
+        status=entry.status,
+        source=entry.source,
+        hits=entry.hits,
+    )
 
 
 def _source_for(failures: list[dict[str, Any]], messages: list[str]) -> str:

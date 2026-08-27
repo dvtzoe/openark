@@ -55,8 +55,7 @@ def reflect(
 ):
     _require_agent(registry, name)
     failures = [f.model_dump() for f in request.failures]
-    result = module.reflect(registry, name, failures, request.messages)
-    return ReflectResponse(**result)
+    return module.reflect(registry, name, failures, request.messages)
 
 
 @router.post("/agents/{name}/lessons", response_model=LessonAddResponse, status_code=201)
@@ -68,12 +67,9 @@ def add_lesson(
 ):
     _require_agent(registry, name)
     try:
-        result = module.add(registry, name, request.rule, source=request.source)
+        return module.add(registry, name, request.rule, source=request.source)
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
-    if result["added"] is None:
-        return LessonAddResponse(added=None, reason="duplicate")
-    return LessonAddResponse(added=result["added"], reason=None)
 
 
 @router.post("/agents/{name}/lessons/{lesson_id}/retire", response_model=LessonRetireResponse)
@@ -84,7 +80,7 @@ def retire_lesson(
     module=Depends(get_lessons_module),
 ):
     _require_agent(registry, name)
-    return LessonRetireResponse(**module.retire(registry, name, lesson_id))
+    return module.retire(registry, name, lesson_id)
 
 
 @router.post("/agents/{name}/lessons/hits", response_model=LessonHitsResponse)
@@ -95,6 +91,4 @@ def register_hits(
     module=Depends(get_lessons_module),
 ):
     _require_agent(registry, name)
-    return LessonHitsResponse(
-        **module.register_hits(registry, name, request.ids, request.session_id)
-    )
+    return module.register_hits(registry, name, request.ids, request.session_id)
