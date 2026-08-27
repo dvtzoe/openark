@@ -374,3 +374,29 @@ Newest entry last. Each entry: date, what was done, what's next.
   `plugin/src/core/service.ts` — a hung service can hang a session), then
   item 3 (the "one corrupted file breaks listing everything" pattern,
   3 occurrences across the Python service).
+
+### 2026-08-28 — Tier 1 #2: timeout on getJSON/postJSON/delete
+
+- Checked `core/llm.py`'s `TaskRunner` for its own timeout (60s default,
+  `httpx.Client(timeout=self._timeout)`) before picking a value, per the
+  finding's own caution — the plugin's ceiling must stay above that so a
+  legitimate slow LLM-backed call (extraction/reflection/distillation/
+  persona_update) isn't mistaken for a hang. Picked 90s
+  (`REQUEST_TIMEOUT_MS`).
+- Added `signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)` to `getJSON`,
+  `postJSON`, and also `delete` (not called out by name in the finding, but
+  the same missing-timeout shape — fixed consistently rather than leaving
+  one sibling method behind, per `READABILITY.md` §8).
+- No existing test file covered `ServiceClient` directly (owner approved
+  expanding coverage) — added `plugin/tests/service.test.ts`: confirms a
+  real `AbortSignal` is attached on every call, a non-2xx response still
+  rejects with `ServiceError`, and a fetch-level abort rejects instead of
+  hanging (simulated directly rather than waiting out a real 90s timeout).
+- Verified: `npm run build`, `npx vitest run` (110/110), `npx biome check`,
+  `scripts/check_file_sizes.sh` — all clean.
+- **Next:** Tier 1 item 3, the "one corrupted file breaks listing
+  everything" pattern (3 occurrences across the Python service:
+  `AgentRegistry.list()` in `core/registry.py`, `SkillsModule.list`/`_read`
+  in `modules/skills.py`, `channels.py`'s `read_channel` in
+  `api/v1/channels.py`) — then Tier 1 item 5 (`MemoryModule.add` missing
+  the error handling `ingest()` has), closing out Tier 1.
