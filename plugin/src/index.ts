@@ -53,7 +53,7 @@ function collectTools(runtime: Runtime): Record<string, ReturnType<typeof tool>>
         if (!live) {
           return `openark: tool "${t.name}" not available for agent "${runtime.agent(context.sessionID)}"`;
         }
-        const result = await live.execute((input.args ?? {}) as Record<string, unknown>, {
+        const result = await live.execute(input.args ?? {}, {
           directory: context.directory,
         } satisfies ToolExecuteContext);
         return typeof result === "string" ? result : JSON.stringify(result, null, 2);

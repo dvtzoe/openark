@@ -3,6 +3,11 @@ export type ModuleContext = {
   manifest: AgentManifest;
   service: ServiceLike;
   log: (level: "info" | "warn" | "error", message: string) => void;
+  // The explicit `| undefined` looks redundant next to `?:` but isn't:
+  // tsconfig's exactOptionalPropertyTypes means an optional property may
+  // still not be assigned `undefined` explicitly (only omitted) unless
+  // `undefined` is in its type — and runtime.ts's withSession() does
+  // assign `session: undefined` explicitly rather than omitting the key.
   session?: { id: string } | undefined;
 };
 
