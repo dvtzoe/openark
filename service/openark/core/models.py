@@ -19,7 +19,7 @@ class AgentCreateRequest(BaseModel):
 
 
 class PersonaEvolveRequest(BaseModel):
-    signals: list[str] = []
+    signals: list[str] = Field(default_factory=list)
     threshold: int = 3
 
 
@@ -30,8 +30,8 @@ class PersonaReplace(BaseModel):
 
 class PersonaEvolveResponse(BaseModel):
     updated: bool = False
-    added: list[str] = []
-    replaced: list[PersonaReplace] = []
+    added: list[str] = Field(default_factory=list)
+    replaced: list[PersonaReplace] = Field(default_factory=list)
     reason: str | None = None
 
 
@@ -43,7 +43,7 @@ class MemoryItem(BaseModel):
 
 
 class MemoryRecallResponse(BaseModel):
-    memories: list[MemoryItem] = []
+    memories: list[MemoryItem] = Field(default_factory=list)
 
 
 class MemoryCreateRequest(BaseModel):
@@ -63,7 +63,7 @@ class MemoryMutation(BaseModel):
 
 class MemoryIngestResponse(BaseModel):
     added: int = 0
-    facts: list[str] = []
+    facts: list[str] = Field(default_factory=list)
     reason: str | None = None
 
 
@@ -81,7 +81,7 @@ class Lesson(BaseModel):
 
 
 class LessonsResponse(BaseModel):
-    lessons: list[Lesson] = []
+    lessons: list[Lesson] = Field(default_factory=list)
 
 
 class FailureReport(BaseModel):
@@ -92,8 +92,8 @@ class FailureReport(BaseModel):
 
 
 class ReflectRequest(BaseModel):
-    failures: list[FailureReport] = []
-    messages: list[str] = []
+    failures: list[FailureReport] = Field(default_factory=list)
+    messages: list[str] = Field(default_factory=list)
 
 
 class LessonPayload(BaseModel):
@@ -105,7 +105,7 @@ class LessonPayload(BaseModel):
 
 
 class ReflectResponse(BaseModel):
-    added: list[LessonPayload] = []
+    added: list[LessonPayload] = Field(default_factory=list)
     skipped: int = 0
     reason: str | None = None
 
@@ -126,13 +126,13 @@ class LessonRetireResponse(BaseModel):
 
 
 class LessonHitsRequest(BaseModel):
-    ids: list[str] = []
+    ids: list[str] = Field(default_factory=list)
     session_id: str
 
 
 class LessonHitsResponse(BaseModel):
     counted: bool = False
-    retired: list[str] = []
+    retired: list[str] = Field(default_factory=list)
 
 
 class SkillSummary(BaseModel):
@@ -142,7 +142,7 @@ class SkillSummary(BaseModel):
 
 
 class SkillsResponse(BaseModel):
-    skills: list[SkillSummary] = []
+    skills: list[SkillSummary] = Field(default_factory=list)
 
 
 class DistillRequest(BaseModel):
