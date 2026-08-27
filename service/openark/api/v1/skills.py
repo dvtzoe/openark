@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 
 from ...core.models import (
     DistillRequest,
@@ -7,22 +7,15 @@ from ...core.models import (
     SkillSummary,
     SkillVerifyResponse,
 )
-from ...core.registry import AgentNotFound, AgentRegistry
+from ...core.registry import AgentRegistry
 from ...modules.skills import SkillsModule
-from .agents import get_registry
+from .agents import get_registry, require_agent
 
 router = APIRouter(tags=["skills"])
 
 
 def get_skills_module(request: Request) -> SkillsModule:
     return request.app.state.modules.skills
-
-
-def _require_agent(registry: AgentRegistry, name: str):
-    try:
-        registry.get(name)
-    except AgentNotFound as err:
-        raise HTTPException(status_code=404, detail="no such agent") from err
 
 
 @router.get("/agents/{name}/skills", response_model=SkillsResponse)
@@ -32,8 +25,8 @@ def list_skills(
     registry: AgentRegistry = Depends(get_registry),
     module=Depends(get_skills_module),
 ):
-    _require_agent(registry, name)
-    skills = module.list(registry.agent_home(name), include_drafts=drafts)
+    agent_home = require_agent(registry, name)
+    skills = module.list(agent_home, include_drafts=drafts)
     return SkillsResponse(
         skills=[
             SkillSummary(name=s.name, description=s.description, status=s.status) for s in skills
@@ -48,7 +41,7 @@ def distill_skill(
     registry: AgentRegistry = Depends(get_registry),
     module=Depends(get_skills_module),
 ):
-    _require_agent(registry, name)
+    require_agent(registry, name)
     return module.distill(registry, name, request.trace)
 
 
@@ -59,5 +52,5 @@ def verify_skill(
     registry: AgentRegistry = Depends(get_registry),
     module=Depends(get_skills_module),
 ):
-    _require_agent(registry, name)
+    require_agent(registry, name)
     return module.verify(registry, name, slug)

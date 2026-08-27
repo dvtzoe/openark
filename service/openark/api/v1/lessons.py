@@ -11,22 +11,15 @@ from ...core.models import (
     ReflectRequest,
     ReflectResponse,
 )
-from ...core.registry import AgentNotFound, AgentRegistry
+from ...core.registry import AgentRegistry
 from ...modules.lessons import LessonsModule
-from .agents import get_registry
+from .agents import get_registry, require_agent
 
 router = APIRouter(tags=["lessons"])
 
 
 def get_lessons_module(request: Request) -> LessonsModule:
     return request.app.state.modules.lessons
-
-
-def _require_agent(registry: AgentRegistry, name: str):
-    try:
-        registry.get(name)
-    except AgentNotFound as err:
-        raise HTTPException(status_code=404, detail="no such agent") from err
 
 
 @router.get("/agents/{name}/lessons", response_model=LessonsResponse)
@@ -36,8 +29,8 @@ def list_lessons(
     registry: AgentRegistry = Depends(get_registry),
     module=Depends(get_lessons_module),
 ):
-    _require_agent(registry, name)
-    entries = module.list(registry.agent_home(name), active_only=active)
+    agent_home = require_agent(registry, name)
+    entries = module.list(agent_home, active_only=active)
     return LessonsResponse(
         lessons=[
             Lesson(id=e.id, rule=e.rule, hits=e.hits, status=e.status, source=e.source)
@@ -53,7 +46,7 @@ def reflect(
     registry: AgentRegistry = Depends(get_registry),
     module=Depends(get_lessons_module),
 ):
-    _require_agent(registry, name)
+    require_agent(registry, name)
     failures = [f.model_dump() for f in request.failures]
     return module.reflect(registry, name, failures, request.messages)
 
@@ -65,7 +58,7 @@ def add_lesson(
     registry: AgentRegistry = Depends(get_registry),
     module=Depends(get_lessons_module),
 ):
-    _require_agent(registry, name)
+    require_agent(registry, name)
     try:
         return module.add(registry, name, request.rule, source=request.source)
     except ValueError as err:
@@ -79,7 +72,7 @@ def retire_lesson(
     registry: AgentRegistry = Depends(get_registry),
     module=Depends(get_lessons_module),
 ):
-    _require_agent(registry, name)
+    require_agent(registry, name)
     return module.retire(registry, name, lesson_id)
 
 
@@ -90,5 +83,5 @@ def register_hits(
     registry: AgentRegistry = Depends(get_registry),
     module=Depends(get_lessons_module),
 ):
-    _require_agent(registry, name)
+    require_agent(registry, name)
     return module.register_hits(registry, name, request.ids, request.session_id)

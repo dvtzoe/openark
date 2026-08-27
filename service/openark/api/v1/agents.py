@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...core.config import get_settings
@@ -9,6 +11,17 @@ router = APIRouter(tags=["agents"])
 
 def get_registry() -> AgentRegistry:
     return AgentRegistry(get_settings().root)
+
+
+def require_agent(registry: AgentRegistry, name: str) -> Path:
+    """Raise 404 if `name` isn't a real agent; otherwise return its home
+    directory. The single shared implementation of a check every API file
+    used to duplicate — see docs/plans/0003-findings-service-api.md #1."""
+    try:
+        registry.get(name)
+    except AgentNotFound as err:
+        raise HTTPException(status_code=404, detail="no such agent") from err
+    return registry.agent_home(name)
 
 
 @router.get("/agents", response_model=list[AgentManifest])

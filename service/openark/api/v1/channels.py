@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import ValidationError
 
 from ...core.models import ChannelItem, ChannelPushRequest
-from ...core.registry import AgentNotFound, AgentRegistry
+from ...core.registry import AgentRegistry
 from ...modules.channels import ChannelsStore
-from .agents import get_registry
+from .agents import get_registry, require_agent
 
 logger = logging.getLogger(__name__)
 
@@ -15,13 +15,6 @@ router = APIRouter(tags=["channels"])
 
 def get_channels_store(request: Request) -> ChannelsStore:
     return request.app.state.modules.channels
-
-
-def _require_agent(registry: AgentRegistry, name: str):
-    try:
-        registry.get(name)
-    except AgentNotFound as err:
-        raise HTTPException(status_code=404, detail="no such agent") from err
 
 
 @router.get("/channels/{channel}", response_model=list[ChannelItem])
@@ -52,7 +45,7 @@ def push_to_channel(
     registry: AgentRegistry = Depends(get_registry),
     store=Depends(get_channels_store),
 ):
-    _require_agent(registry, name)
+    require_agent(registry, name)
     try:
         return store.push(registry, name, channel, request.text, kind=request.kind)
     except ValueError as err:
@@ -63,7 +56,7 @@ def push_to_channel(
 def list_subscriptions(
     name: str, registry=Depends(get_registry), store=Depends(get_channels_store)
 ):
-    _require_agent(registry, name)
+    require_agent(registry, name)
     return store.subscriptions(registry, name)
 
 
@@ -74,7 +67,7 @@ def subscribe(
     registry: AgentRegistry = Depends(get_registry),
     store=Depends(get_channels_store),
 ):
-    _require_agent(registry, name)
+    require_agent(registry, name)
     try:
         return store.subscribe(registry, name, channel)
     except ValueError as err:
@@ -88,7 +81,7 @@ def unsubscribe(
     registry: AgentRegistry = Depends(get_registry),
     store=Depends(get_channels_store),
 ):
-    _require_agent(registry, name)
+    require_agent(registry, name)
     try:
         return store.unsubscribe(registry, name, channel)
     except ValueError as err:
