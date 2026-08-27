@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { bootstrapVenv, venvPython } from "./bootstrap.js";
+import { bootstrapVenv, installedVenvPython } from "./bootstrap.js";
 import { agentHome, openarkHome, readGlobalConfig, serviceBaseUrl } from "./config.js";
 import {
   installCommands,
@@ -242,7 +242,7 @@ function checkCommands(configDir: string): DoctorCheck {
 
 function checkVenv(home: string, serviceDir?: string): DoctorCheck {
   const id = "venv";
-  const python = venvPython(home);
+  const python = installedVenvPython(home);
   if (!existsSync(python)) {
     return {
       id,

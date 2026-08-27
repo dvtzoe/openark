@@ -9,7 +9,7 @@ export type BootstrapOptions = {
   uvBin?: string;
 };
 
-export function venvPython(home: string = openarkHome()): string {
+export function installedVenvPython(home: string = openarkHome()): string {
   return join(home, "venv", "bin", "python");
 }
 
@@ -23,7 +23,7 @@ export function bootstrapVenv(options: BootstrapOptions = {}): {
   created: boolean;
 } {
   const home = options.home ?? openarkHome();
-  const python = venvPython(home);
+  const python = installedVenvPython(home);
   if (existsSync(python)) {
     return { python, created: false };
   }

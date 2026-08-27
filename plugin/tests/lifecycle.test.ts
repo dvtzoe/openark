@@ -3,10 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  devVenvPython,
   ensureService,
   serviceDirFromEnv,
   spawnService,
-  venvPython,
   waitForHealth,
 } from "../src/core/lifecycle";
 import type { ServiceClient } from "../src/core/service";
@@ -49,7 +49,7 @@ describe("spawnService", () => {
     const dir = mkdtempSync(join(tmpdir(), "openark-lifecycle-"));
     try {
       expect(spawnService({ serviceDir: dir })).toBeNull();
-      expect(venvPython(dir)).toBe(join(dir, ".venv", "bin", "python"));
+      expect(devVenvPython(dir)).toBe(join(dir, ".venv", "bin", "python"));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

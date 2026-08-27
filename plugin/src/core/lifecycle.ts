@@ -18,7 +18,7 @@ export function serviceDirFromEnv(env: NodeJS.ProcessEnv = process.env): string 
   return env.OPENARK_SERVICE_DIR ?? join(process.cwd(), "service");
 }
 
-export function venvPython(dir: string): string {
+export function devVenvPython(dir: string): string {
   return join(dir, ".venv", "bin", "python");
 }
 
@@ -37,7 +37,7 @@ export async function waitForHealth(
 
 export function spawnService(options: SpawnOptions = {}): ReturnType<typeof spawn> | null {
   const dir = options.serviceDir ?? serviceDirFromEnv();
-  const python = options.pythonBin ?? venvPython(dir);
+  const python = options.pythonBin ?? devVenvPython(dir);
   if (!existsSync(python)) return null;
   const port = options.port ?? 8765;
   const child = spawn(

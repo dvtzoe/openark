@@ -3,10 +3,11 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { seedAgentHome } from "./core/agent-template.js";
-import { bootstrapVenv, venvPython } from "./core/bootstrap.js";
+import { bootstrapVenv, installedVenvPython } from "./core/bootstrap.js";
 import { agentHome, openarkHome, readGlobalConfig, serviceBaseUrl } from "./core/config.js";
 import { type DoctorCheck, runDoctor } from "./core/doctor.js";
 import { installAll, listAgents, packageRoot, uninstallAll } from "./core/installer.js";
+import { devVenvPython, serviceDirFromEnv } from "./core/lifecycle.js";
 import { ServiceClient } from "./core/service.js";
 
 const USAGE = `openark — modular agents for opencode
@@ -110,10 +111,9 @@ function removeAgent(name: string, yes: boolean): void {
 }
 
 function servicePython(): string {
-  const homeVenv = venvPython();
+  const homeVenv = installedVenvPython();
   if (existsSync(homeVenv)) return homeVenv;
-  const serviceDir = process.env.OPENARK_SERVICE_DIR ?? join(process.cwd(), "service");
-  const devVenv = join(serviceDir, ".venv", "bin", "python");
+  const devVenv = devVenvPython(serviceDirFromEnv());
   if (existsSync(devVenv)) return devVenv;
   return fail("service venv missing — run: openark install (or `make dev` in a dev checkout)");
 }
@@ -153,7 +153,7 @@ function printChecks(checks: DoctorCheck[]): void {
 }
 
 async function doctorCmd(fix: boolean): Promise<void> {
-  const serviceDir = process.env.OPENARK_SERVICE_DIR ?? join(process.cwd(), "service");
+  const serviceDir = serviceDirFromEnv();
   let checks = await runDoctor({ serviceDir });
   if (fix) {
     for (const check of checks) {
@@ -178,7 +178,7 @@ async function doctorCmd(fix: boolean): Promise<void> {
 function installCmd(): void {
   try {
     const { python, created } = bootstrapVenv({
-      serviceDir: process.env.OPENARK_SERVICE_DIR ?? join(process.cwd(), "service"),
+      serviceDir: serviceDirFromEnv(),
     });
     console.log(created ? `bootstrapped service venv: ${python}` : `service venv ready: ${python}`);
   } catch (err) {
