@@ -88,6 +88,12 @@ class Mem0StoreFactory:
     def __call__(self, agent_home: Path) -> Mem0Store:
         store = self._stores.get(agent_home)
         if store is None:
+            # Built once per agent with whatever LLM/embedder route
+            # resolves at first use, then cached for the life of the
+            # process — rebuilding a Mem0/Chroma connection per call would
+            # be wasteful. Tradeoff: changing openark.json's model routing
+            # for extraction/embeddings after an agent's memory has
+            # already been used has no effect until the service restarts.
             store = Mem0Store(agent_home / "data", self._llm_config(), self._embedder_config())
             self._stores[agent_home] = store
         return store
