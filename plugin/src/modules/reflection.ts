@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { filteredStringArray, requiredString } from "../core/args.js";
+import { pushBounded } from "../core/bounded-buffer.js";
 import type { InjectionBlock, ModuleContext, ModuleTool, OpenArkModule } from "../core/types.js";
 import type { ToolResultEvent } from "../core/types.js";
 import type { components } from "../generated/api-types.js";
@@ -74,15 +75,13 @@ export const reflectionModule: OpenArkModule = {
     const text = message.text.trim();
     const buf = bufferFor(ctx);
     if (!text || buf.failures.length === 0) return;
-    if (buf.messages.length >= MAX_BUFFERED) buf.messages.shift();
-    buf.messages.push(text);
+    pushBounded(buf.messages, text, MAX_BUFFERED);
   },
 
   async onToolResult(ctx, result) {
     if (result.ok) return;
     const buf = bufferFor(ctx);
-    if (buf.failures.length >= MAX_BUFFERED) buf.failures.shift();
-    buf.failures.push(result);
+    pushBounded(buf.failures, result, MAX_BUFFERED);
   },
 
   async onSessionEnd(ctx) {

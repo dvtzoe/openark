@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import { z } from "zod";
 import { requiredString } from "../core/args.js";
+import { pushBounded } from "../core/bounded-buffer.js";
 import type { InjectionBlock, ModuleContext, ModuleTool, OpenArkModule } from "../core/types.js";
 import type { ToolExecuteContext } from "../core/types.js";
 import type { components } from "../generated/api-types.js";
@@ -58,8 +59,7 @@ export const memoryModule: OpenArkModule = {
     if (!text) return;
     const key = ctx.session?.id ?? "";
     const transcript = transcripts.get(key) ?? [];
-    if (transcript.length >= MAX_BUFFERED_MESSAGES) transcript.shift();
-    transcript.push(`user: ${text}`);
+    pushBounded(transcript, `user: ${text}`, MAX_BUFFERED_MESSAGES);
     transcripts.set(key, transcript);
   },
 
