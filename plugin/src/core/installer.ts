@@ -55,7 +55,7 @@ export function installPluginShim(configDir: string): string {
   const shim = join(pluginsDir, "openark.js");
   const dist = pluginDistPath();
   if (!existsSync(dist)) {
-    throw new Error(`plugin dist not found at ${dist} — run \`npm run build\` first`);
+    throw new Error(`plugin dist not found at ${dist} — run \`bun run build\` first`);
   }
   const url = new URL(`file://${dist}`).href;
   writeFileSync(

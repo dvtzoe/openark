@@ -57,7 +57,7 @@ function checkPluginDist(): DoctorCheck {
         id: "plugin-dist",
         status: "error",
         message: `plugin dist missing: ${dist}`,
-        hint: "run `npm run build` in the plugin checkout (or reinstall the openark package)",
+        hint: "run `bun run build` in the plugin checkout (or reinstall the openark package)",
       };
 }
 

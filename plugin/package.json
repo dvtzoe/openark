@@ -26,8 +26,9 @@
     "llm"
   ],
   "engines": {
-    "node": ">=20"
+    "bun": ">=1.4.0"
   },
+  "packageManager": "bun@1.4.0",
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@opencode-ai/plugin": "^1.0.0",
@@ -37,6 +38,11 @@
     "vitest": "^2.1.8"
   },
   "dependencies": {
-    "zod": "^4.1.8"
-  }
+    "zod": "4.1.8"
+  },
+  "trustedDependencies": [
+    "@biomejs/biome",
+    "esbuild",
+    "msgpackr-extract"
+  ]
 }
