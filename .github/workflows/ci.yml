@@ -28,8 +28,8 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - run: bunx biome check src tests
-      - run: bunx vitest run
       - run: bun run build
+      - run: bunx vitest run
 
   service:
     name: service (py ${{ matrix.python }})
