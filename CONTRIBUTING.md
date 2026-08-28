@@ -18,12 +18,12 @@ contribute code, docs, or modules.
 
 ## Development setup
 
-Requirements: Node >= 20, Python >= 3.11, [uv](https://docs.astral.sh/uv/)
-(or plain `python -m venv`).
+Requirements: [Bun](https://bun.sh) >= 1.4, Python >= 3.11,
+[uv](https://docs.astral.sh/uv/) (or plain `python -m venv`).
 
 ```sh
 git clone <repo-url> && cd openark
-make dev        # npm ci in plugin/, uv venv + install in service/
+make dev        # bun install in plugin/, uv venv + install in service/
 ```
 
 Day-to-day:
@@ -39,7 +39,7 @@ make fmt        # biome format + ruff format (auto-fix)
 ```sh
 make service-run            # FastAPI on 127.0.0.1:8765
 make plugin-build           # compile plugin to dist/
-node plugin/dist/cli.js     # the `openark` CLI
+bun plugin/dist/cli.js      # the `openark` CLI
 ```
 
 ## Repo tour

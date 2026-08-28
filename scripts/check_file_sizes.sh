@@ -23,7 +23,7 @@ done < <(find . -type f \
   -not -path './service/.ruff_cache/*' \
   -not -path '*/__pycache__/*' \
   -not -name 'LICENSE' \
-  -not -name 'package-lock.json' \
+  -not -name 'bun.lock' \
   -not -name 'uv.lock' \
   -not -path './plugin/src/generated/*')
 

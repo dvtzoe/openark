@@ -16,23 +16,20 @@ jobs:
       - run: bash scripts/check_file_sizes.sh
 
   plugin:
-    name: plugin (node ${{ matrix.node }})
+    name: plugin (bun)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node: [20, 22]
     defaults:
       run:
         working-directory: plugin
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: ${{ matrix.node }}
-      - run: npm ci
-      - run: npx biome check src tests
-      - run: npx vitest run
-      - run: npm run build
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bunx biome check src tests
+      - run: bunx vitest run
+      - run: bun run build
 
   service:
     name: service (py ${{ matrix.python }})

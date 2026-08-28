@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 // Scaffold a new openark module: make create-module name=my-module
 import { mkdirSync, writeFileSync, existsSync, appendFileSync } from "node:fs"
 import { dirname, join } from "node:path"
