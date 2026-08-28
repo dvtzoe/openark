@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { seedAgentHome } from "./core/agent-template.js";
 import { bootstrapVenv, installedVenvPython } from "./core/bootstrap.js";
@@ -72,6 +72,10 @@ function seedFromPersona(dir: string, name: string, persona: string): void {
     const content = readFileSync(join(source, file), "utf8").replace(/^# defoko/m, `# ${name}`);
     rmSync(join(dir, file));
     writeFileSync(join(dir, file), content);
+    // Bundled personas may ship drop-in directories (persona.<base>.md.d/);
+    // copy them so seeded agents read the same fragment set.
+    const dropin = join(source, `${file}.d`);
+    if (existsSync(dropin)) cpSync(dropin, join(dir, `${file}.d`), { recursive: true });
   }
 }
 

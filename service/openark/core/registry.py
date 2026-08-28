@@ -61,6 +61,45 @@ class AgentNotFound(KeyError):
     pass
 
 
+# A persona "fragment" is one file backing a persona: the main file
+# (persona.core.md / persona.evolving.md) or a drop-in under the sibling
+# "<base>.d/" directory. (path, label, content) — label is the path relative
+# to the agent home, used for provenance markers and audit entries.
+PersonaFragment = tuple[Path, str, str]
+
+
+def _iter_dropin_files(dropin_dir: Path) -> list[Path]:
+    # Descendants of the .d directory, .md files only, hidden entries skipped,
+    # lexicographic by relative path (systemd-style: predictable, no natural
+    # sort magic — prefix files 10- and 20- to control order).
+    if not dropin_dir.is_dir():
+        return []
+    files = [
+        entry
+        for entry in sorted(dropin_dir.rglob("*"))
+        if entry.is_file()
+        and entry.suffix == ".md"
+        and not any(part.startswith(".") for part in entry.relative_to(dropin_dir).parts)
+    ]
+    files.sort(key=lambda p: p.relative_to(dropin_dir).as_posix())
+    return files
+
+
+def _merge_fragments(fragments: list[PersonaFragment]) -> str:
+    # Main file first, then drop-ins, each drop-in preceded by a provenance
+    # comment so injected output shows where a rule came from.
+    parts: list[str] = []
+    for _, label, content in fragments:
+        chunk = content.strip("\n")
+        if not chunk:
+            continue
+        if ".d/" in label:
+            parts.append(f"<!-- from: {label} -->\n{chunk}")
+        else:
+            parts.append(chunk)
+    return "\n\n".join(parts).strip() + "\n" if parts else ""
+
+
 class AgentAlreadyExists(ValueError):
     pass
 
@@ -148,6 +187,10 @@ class AgentRegistry:
             source = BUNDLED_PERSONAS / persona
             (home / "persona.core.md").write_text((source / "persona.core.md").read_text())
             (home / "persona.evolving.md").write_text((source / "persona.evolving.md").read_text())
+            for base in self.PERSONA_BASES:
+                dropin = source / f"{base}.d"
+                if dropin.is_dir():
+                    shutil.copytree(dropin, home / f"{base}.d", dirs_exist_ok=True)
         else:
             (home / "persona.core.md").write_text(CORE_TEMPLATE)
             (home / "persona.evolving.md").write_text(EVOLVING_TEMPLATE)
@@ -162,20 +205,64 @@ class AgentRegistry:
             raise AgentNotFound(name)
         shutil.rmtree(home)
 
-    def read_persona(self, name: str) -> tuple[str, str]:
+    # Bases the service knows how to compose from main file + drop-ins.
+    PERSONA_BASES = ("persona.core.md", "persona.evolving.md")
+
+    def _persona_fragments(self, home: Path, base: str) -> list[PersonaFragment]:
+        # Main file first (if present), then drop-ins from "<base>.d/".
+        # At least one source must exist: the main file alone is enough, so
+        # is a single drop-in; no source at all is the same error as a
+        # missing file has always been.
+        fragments: list[PersonaFragment] = []
+        main = home / base
+        if main.is_file():
+            fragments.append((main, base, main.read_text()))
+        for path in _iter_dropin_files(home / f"{base}.d"):
+            label = path.relative_to(home).as_posix()
+            fragments.append((path, label, path.read_text()))
+        return fragments
+
+    def persona_fragments(self, name: str, base: str) -> list[PersonaFragment]:
+        if base not in self.PERSONA_BASES:
+            raise ValueError(f"unknown persona base: {base!r}")
         home = self.agent_home(name)
         if not (home / "agent.json").exists():
             raise AgentNotFound(name)
-        core = (home / "persona.core.md").read_text()
-        evolving = (home / "persona.evolving.md").read_text()
+        fragments = self._persona_fragments(home, base)
+        if not fragments:
+            raise FileNotFoundError(home / base)
+        return fragments
+
+    def read_persona(self, name: str) -> tuple[str, str]:
+        core = _merge_fragments(self.persona_fragments(name, "persona.core.md"))
+        evolving = _merge_fragments(self.persona_fragments(name, "persona.evolving.md"))
         return core, evolving
 
     def write_persona(self, name: str, core: str, evolving: str) -> None:
+        # Main files only — drop-in directories are never touched here.
         home = self.agent_home(name)
         if not (home / "agent.json").exists():
             raise AgentNotFound(name)
-        (home / "persona.core.md").write_text(core)
-        (home / "persona.evolving.md").write_text(evolving)
+        _atomic_write_text(home / "persona.core.md", core)
+        _atomic_write_text(home / "persona.evolving.md", evolving)
+
+    def write_persona_fragment(self, name: str, path: Path, content: str) -> None:
+        # Agent-authored writes may only land on the evolving main file or
+        # inside its drop-in directory (core drop-ins are user config; the
+        # core persona itself is never rewritten by the agent).
+        home = self.agent_home(name)
+        if not (home / "agent.json").exists():
+            raise AgentNotFound(name)
+        resolved = path.resolve()
+        main = (home / "persona.evolving.md").resolve()
+        dropin = (home / "persona.evolving.md.d").resolve()
+        allowed = resolved == main or (dropin in resolved.parents and resolved.suffix == ".md")
+        if not allowed:
+            raise ValueError(
+                f"refusing to write persona fragment outside persona.evolving.md(.d): {path}"
+            )
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_text(resolved, content)
 
     def audit(self, agent: str, action: str, detail: str = "") -> None:
         home = self.agent_home(agent)

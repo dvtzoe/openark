@@ -10,6 +10,16 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_THRESHOLD = 3
 BULLET = "- "
+EVOLVING_MAIN = "persona.evolving.md"
+
+
+class _FragmentState:
+    """One evolving persona file, split into header lines and bullets."""
+
+    def __init__(self, path: Path, label: str, content: str):
+        self.path = path
+        self.label = label
+        self.header, self.bullets = _split_evolving(content)
 
 
 class PersonaModule:
@@ -42,11 +52,20 @@ class PersonaModule:
         if self._runner is None or not self._runner.available("persona_update"):
             return PersonaEvolveResponse(reason="no-model")
 
-        core, evolving = registry.read_persona(agent)
-        header, preferences = _split_evolving(evolving)
+        # Evolving persona = main file + drop-ins under persona.evolving.md.d/.
+        # The agent may write into both (core drop-ins are user config and are
+        # never touched here). Replaces edit the fragment a bullet lives in;
+        # adds always land in the main file.
+        fragments = registry.persona_fragments(agent, "persona.evolving.md")
+        states = [_FragmentState(path, label, content) for path, label, content in fragments]
+        if not any(state.label == EVOLVING_MAIN for state in states):
+            virtual_main = registry.agent_home(agent) / EVOLVING_MAIN
+            states.append(_FragmentState(virtual_main, EVOLVING_MAIN, ""))
+        main_index = next(i for i, state in enumerate(states) if state.label == EVOLVING_MAIN)
+
         prompt = render(
             self._prompt(),
-            current=_format_preferences(preferences),
+            current=_format_preferences([b for s in states for b in s.bullets]),
             signals="\n".join(f"- {s}" for s in distinct),
             threshold=str(threshold),
         )
@@ -62,16 +81,22 @@ class PersonaModule:
         if not adds and not replaces:
             return PersonaEvolveResponse(reason="no-changes")
 
-        new_preferences, applied_adds, applied_replaces = _apply(preferences, adds, replaces)
+        pools, applied_adds, applied_replaces = _apply(
+            [state.bullets for state in states], main_index, adds, replaces
+        )
         if not applied_adds and not applied_replaces:
             return PersonaEvolveResponse(reason="no-match")
 
-        registry.write_persona(
-            agent,
-            core,
-            _format_evolving(header, new_preferences),
+        changed: list[str] = []
+        for state, pool in zip(states, pools, strict=True):
+            if pool == state.bullets:
+                continue
+            registry.write_persona_fragment(agent, state.path, _format_evolving(state.header, pool))
+            changed.append(state.label)
+
+        registry.audit(
+            agent, "persona.evolve", _diff_detail(applied_adds, applied_replaces, changed)
         )
-        registry.audit(agent, "persona.evolve", _diff_detail(applied_adds, applied_replaces))
         return PersonaEvolveResponse(
             updated=True,
             added=applied_adds,
@@ -97,9 +122,8 @@ def _format_preferences(preferences: list[str]) -> str:
 
 
 def _format_evolving(header: list[str], preferences: list[str]) -> str:
-    parts = ["\n".join(header).rstrip(), ""]
-    if preferences:
-        parts.extend(f"{BULLET}{p}" for p in preferences)
+    parts = ["\n".join(header).rstrip(), ""] if header else []
+    parts.extend(f"{BULLET}{p}" for p in preferences)
     return "\n".join(parts).rstrip() + "\n"
 
 
@@ -132,28 +156,44 @@ def _dedupe(items: list[str]) -> list[str]:
 
 
 def _apply(
-    preferences: list[str],
+    pools: list[list[str]],
+    main_index: int,
     adds: list[str],
     replaces: list[tuple[str, str]],
-) -> tuple[list[str], list[str], list[tuple[str, str]]]:
-    result = list(preferences)
+) -> tuple[list[list[str]], list[str], list[tuple[str, str]]]:
+    # Applies a proposal across per-file bullet pools. Replaces rewrite the
+    # pool the matched bullet lives in; adds always land in the main file's
+    # pool (main_index). Matching operates on the merged view so fragment
+    # boundaries are invisible to the proposal format.
+    new_pools = [list(pool) for pool in pools]
+    merged = [bullet for pool in new_pools for bullet in pool]
+    owner = [i for i, pool in enumerate(new_pools) for _ in pool]
+    offsets = []
+    offset = 0
+    for pool in new_pools:
+        offsets.append(offset)
+        offset += len(pool)
+
     applied_adds: list[str] = []
     applied_replaces: list[tuple[str, str]] = []
 
     for old, new in replaces:
-        index = _find(result, old)
+        index = _find(merged, old)
         if index is None:
             continue
-        result[index] = new
+        fragment = owner[index]
+        new_pools[fragment][index - offsets[fragment]] = new
+        merged[index] = new
         applied_replaces.append((old, new))
 
     for add in adds:
-        if _find(result, add) is not None:
+        if _find(merged, add) is not None:
             continue
-        result.append(add)
+        new_pools[main_index].append(add)
+        merged.append(add)
         applied_adds.append(add)
 
-    return result, applied_adds, applied_replaces
+    return new_pools, applied_adds, applied_replaces
 
 
 def _find(preferences: list[str], target: str) -> int | None:
@@ -167,10 +207,16 @@ def _find(preferences: list[str], target: str) -> int | None:
     return None
 
 
-def _diff_detail(adds: list[str], replaces: list[tuple[str, str]]) -> str:
+def _diff_detail(
+    adds: list[str],
+    replaces: list[tuple[str, str]],
+    files: list[str],
+) -> str:
     parts = [f"added={len(adds)} replaced={len(replaces)}"]
     for add in adds:
         parts.append(f"+ {add}")
     for old, new in replaces:
         parts.append(f"~ {old} => {new}")
+    if files:
+        parts.append(f"files={','.join(files)}")
     return " | ".join(parts)

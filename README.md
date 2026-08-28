@@ -110,6 +110,13 @@ rewrites it), `persona.evolving.md`, `lessons.md`, `skills/`, and
 `logs/audit.log` (every agent-authored change, with diffs). Delete the
 directory and the agent is gone.
 
+Both persona files support drop-in directories: any `.md` descendants of
+`persona.core.md.d/` and `persona.evolving.md.d/` are appended after the
+main file (lexicographic order, each marked with a `<!-- from: ... -->`
+comment). Core drop-ins are yours — the agent never writes there; evolving
+drop-ins are agent-writable, so preferences the agent evolves survive in
+whichever fragment they live in.
+
 ### Configuration
 
 Toggle modules per agent in `agent.json` — missing entries mean disabled, and

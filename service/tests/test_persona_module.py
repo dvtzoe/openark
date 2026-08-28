@@ -171,3 +171,82 @@ def test_unknown_persona_rejected(tmp_path):
     reg.ensure_layout()
     with pytest.raises(UnknownPersona):
         reg.create("x", persona="nope")
+
+
+# --- evolving persona drop-ins (persona.evolving.md.d/) ---------------------
+
+
+DROPIN = "persona.evolving.md.d/10-style.md"
+
+
+def test_evolve_replaces_bullet_inside_dropin_fragment(registry):
+    home = registry.agent_home("defoko")
+    (home / "persona.evolving.md.d").mkdir()
+    (home / DROPIN).write_text("## Style notes\n\n- Likes short code blocks\n")
+
+    module = make_module(
+        FakeRunner(output="- replaces: Likes short code blocks\nPrefers verbose code samples\n")
+    )
+    result = module.evolve(registry, "defoko", ["a", "b", "c"])
+
+    assert result.updated is True
+    assert result.replaced == [
+        PersonaReplace(old="Likes short code blocks", new="Prefers verbose code samples")
+    ]
+    # The drop-in fragment is rewritten in place; the main file is untouched.
+    assert (home / DROPIN).read_text() == "## Style notes\n\n- Prefers verbose code samples\n"
+    assert (home / "persona.evolving.md").read_text() == EVOLVING
+
+    audit = (home / "logs" / "audit.log").read_text()
+    assert "files=persona.evolving.md.d/10-style.md" in audit
+
+
+def test_evolve_adds_land_in_main_not_dropin(registry):
+    home = registry.agent_home("defoko")
+    (home / "persona.evolving.md.d").mkdir()
+    (home / DROPIN).write_text("- Drop-in rule\n")
+
+    module = make_module(FakeRunner(output="Dislikes loud notifications\n"))
+    result = module.evolve(registry, "defoko", ["a", "b", "c"])
+
+    assert result.updated is True
+    assert result.added == ["Dislikes loud notifications"]
+    assert "- Dislikes loud notifications" in (home / "persona.evolving.md").read_text()
+    assert (home / DROPIN).read_text() == "- Drop-in rule\n"
+
+    audit = (home / "logs" / "audit.log").read_text()
+    assert "files=persona.evolving.md" in audit
+
+
+def test_evolve_creates_main_when_only_dropins_exist(registry):
+    home = registry.agent_home("defoko")
+    (home / "persona.evolving.md").unlink()
+    (home / "persona.evolving.md.d").mkdir()
+    (home / DROPIN).write_text("- Drop-in rule\n")
+
+    module = make_module(
+        FakeRunner(output="- replaces: Drop-in rule\nUpdated drop-in rule\nKeeps sessions short\n")
+    )
+    result = module.evolve(registry, "defoko", ["a", "b", "c"])
+
+    assert result.updated is True
+    assert (home / DROPIN).read_text() == "- Updated drop-in rule\n"
+    main = (home / "persona.evolving.md").read_text()
+    assert "- Keeps sessions short" in main
+
+    _, evolving = registry.read_persona("defoko")
+    assert "Updated drop-in rule" in evolving
+    assert "Keeps sessions short" in evolving
+
+
+def test_evolve_never_touches_core_or_core_dropins(registry):
+    home = registry.agent_home("defoko")
+    registry.write_persona("defoko", "# untouchable core\n", EVOLVING)
+    (home / "persona.core.md.d").mkdir()
+    (home / "persona.core.md.d" / "10-config.md").write_text("User config rule\n")
+
+    module = make_module(FakeRunner(output="Some new preference\n"))
+    module.evolve(registry, "defoko", ["a", "b", "c"])
+
+    assert (home / "persona.core.md").read_text() == "# untouchable core\n"
+    assert (home / "persona.core.md.d" / "10-config.md").read_text() == "User config rule\n"

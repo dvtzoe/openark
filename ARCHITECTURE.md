@@ -29,7 +29,9 @@ How the pieces fit together. For per-module design see
 ├── agents/<name>/             one home per agent
 │   ├── agent.json             manifest: module toggles, channel subs
 │   ├── persona.core.md        user-authored, never auto-rewritten
+│   │   └── .md.d/             optional drop-in fragments (user config)
 │   ├── persona.evolving.md    agent-managed preferences (audited)
+│   │   └── .md.d/             optional drop-ins, agent-writable
 │   ├── lessons.md             learned rules w/ provenance + counters
 │   ├── skills/                distilled procedures (SKILL.md)
 │   ├── data/                  memory store (Mem0/Chroma)

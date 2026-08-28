@@ -30,6 +30,16 @@ is in [MODULE_SPEC.md](MODULE_SPEC.md); method background is in
   priority 100.
 - `persona.evolving.md` — agent-managed learned preferences (bullet list),
   injected at 80.
+- **Drop-in directories:** both files additionally compose any `.md`
+  descendants of a sibling `persona.core.md.d/` / `persona.evolving.md.d/`
+  directory (main file first, then fragments sorted lexicographically; only
+  `.md`, hidden entries skipped). Each fragment is preceded by an
+  `<!-- from: ... -->` provenance comment. At least one source must exist
+  (main file or a single drop-in). Core drop-ins are user config and never
+  agent-written; evolving drop-ins are agent-writable — evolution applies
+  replaces in the fragment a bullet lives in, adds land in the main file,
+  and every rewritten file is audited. Bundled personas may ship `.d`
+  directories; `create` copies them.
 - Updates use `prompts/persona_update.md` with a confidence threshold
   (default: 3 distinct signals); the service gates on distinct-signal count
   before calling the model. Traits never change, only preferences.
