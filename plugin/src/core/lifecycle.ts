@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_SERVICE_PORT } from "./config.js";
+import { installedVenvPython } from "./bootstrap.js";
+import { DEFAULT_SERVICE_PORT, openarkHome } from "./config.js";
 import type { ServiceClient } from "./service.js";
 
 const HEALTH_TIMEOUT_MS = 20000;
@@ -10,10 +11,13 @@ const POLL_INTERVAL_MS = 500;
 export type SpawnOptions = {
   serviceDir?: string;
   pythonBin?: string;
+  home?: string;
   port?: number;
   env?: NodeJS.ProcessEnv;
   logger?: (message: string) => void;
 };
+
+export type ResolvePythonOptions = Pick<SpawnOptions, "serviceDir" | "pythonBin" | "home" | "env">;
 
 export function serviceDirFromEnv(env: NodeJS.ProcessEnv = process.env): string {
   return env.OPENARK_SERVICE_DIR ?? join(process.cwd(), "service");
@@ -21,6 +25,28 @@ export function serviceDirFromEnv(env: NodeJS.ProcessEnv = process.env): string 
 
 export function devVenvPython(dir: string): string {
   return join(dir, ".venv", "bin", "python");
+}
+
+// Pick the python that will run the service. An explicit pythonBin always
+// wins. Otherwise the installed venv (~/.openark/venv, bootstrapped by
+// `openark install`) is preferred because it works from any cwd — the dev
+// venv only exists inside a service checkout, so resolving it from
+// `process.cwd()/service` breaks auto-spawn in every other project. When a
+// service dir is explicitly given (option or OPENARK_SERVICE_DIR) the dev
+// venv under it wins instead, since that signals dev intent.
+export function resolveServicePython(options: ResolvePythonOptions = {}): string | null {
+  if (options.pythonBin) {
+    return existsSync(options.pythonBin) ? options.pythonBin : null;
+  }
+  const env = options.env ?? process.env;
+  const explicitDir = options.serviceDir ?? env.OPENARK_SERVICE_DIR;
+  const installed = installedVenvPython(options.home ?? openarkHome());
+  const installedOk = existsSync(installed);
+  const dir = explicitDir ?? serviceDirFromEnv(env);
+  const dev = devVenvPython(dir);
+  const devOk = existsSync(dev);
+  if (explicitDir) return devOk ? dev : installedOk ? installed : null;
+  return installedOk ? installed : devOk ? dev : null;
 }
 
 export async function waitForHealth(
@@ -37,9 +63,8 @@ export async function waitForHealth(
 }
 
 export function spawnService(options: SpawnOptions = {}): ReturnType<typeof spawn> | null {
-  const dir = options.serviceDir ?? serviceDirFromEnv();
-  const python = options.pythonBin ?? devVenvPython(dir);
-  if (!existsSync(python)) return null;
+  const python = resolveServicePython(options);
+  if (!python) return null;
   const port = options.port ?? DEFAULT_SERVICE_PORT;
   const child = spawn(
     python,

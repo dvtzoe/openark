@@ -2,9 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { installedVenvPython } from "../src/core/bootstrap";
 import {
   devVenvPython,
   ensureService,
+  resolveServicePython,
   serviceDirFromEnv,
   spawnService,
   waitForHealth,
@@ -44,14 +46,117 @@ describe("waitForHealth", () => {
   });
 });
 
-describe("spawnService", () => {
-  it("returns null when the venv python is missing", () => {
+describe("resolveServicePython", () => {
+  const emptyEnv = {} as NodeJS.ProcessEnv;
+
+  function fakePython(path: string): string {
+    mkdirSync(join(path), { recursive: true });
+    const python = join(path, "python");
+    writeFileSync(python, "#!/bin/sh\nexit 0\n");
+    return python;
+  }
+
+  it("prefers an explicit pythonBin when it exists", () => {
     const dir = mkdtempSync(join(tmpdir(), "openark-lifecycle-"));
     try {
-      expect(spawnService({ serviceDir: dir })).toBeNull();
+      const python = fakePython(dir);
+      expect(resolveServicePython({ pythonBin: python, env: emptyEnv })).toBe(python);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns null for a missing explicit pythonBin", () => {
+    const dir = mkdtempSync(join(tmpdir(), "openark-lifecycle-"));
+    try {
+      expect(
+        resolveServicePython({ pythonBin: join(dir, "nope"), env: emptyEnv, home: dir }),
+      ).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers the installed venv in the default case (any cwd)", () => {
+    const home = mkdtempSync(join(tmpdir(), "openark-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "openark-cwd-"));
+    const prevCwd = process.cwd();
+    try {
+      const installedDir = join(home, "venv", "bin");
+      const installed = fakePython(installedDir);
+      expect(installed).toBe(installedVenvPython(home));
+      // A cwd-derived dev venv exists too — it must still lose to the
+      // installed venv, otherwise auto-spawn only works inside the
+      // service checkout.
+      fakePython(join(cwd, "service", ".venv", "bin"));
+      process.chdir(cwd);
+      expect(resolveServicePython({ home, env: emptyEnv })).toBe(installed);
+    } finally {
+      process.chdir(prevCwd);
+      rmSync(home, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers the dev venv when a service dir is explicitly given", () => {
+    const home = mkdtempSync(join(tmpdir(), "openark-home-"));
+    const serviceDir = mkdtempSync(join(tmpdir(), "openark-svc-"));
+    try {
+      fakePython(join(home, "venv", "bin"));
+      const dev = fakePython(join(serviceDir, ".venv", "bin"));
+      expect(resolveServicePython({ home, serviceDir, env: emptyEnv })).toBe(dev);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(serviceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the installed venv when the explicit dev venv is missing", () => {
+    const home = mkdtempSync(join(tmpdir(), "openark-home-"));
+    const serviceDir = mkdtempSync(join(tmpdir(), "openark-svc-"));
+    try {
+      const installed = fakePython(join(home, "venv", "bin"));
+      expect(resolveServicePython({ home, serviceDir, env: emptyEnv })).toBe(installed);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(serviceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the dev venv when the installed venv is missing", () => {
+    const home = mkdtempSync(join(tmpdir(), "openark-home-"));
+    const serviceDir = mkdtempSync(join(tmpdir(), "openark-svc-"));
+    try {
+      const dev = fakePython(join(serviceDir, ".venv", "bin"));
+      expect(resolveServicePython({ home, serviceDir, env: emptyEnv })).toBe(dev);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(serviceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns null when neither venv exists", () => {
+    const home = mkdtempSync(join(tmpdir(), "openark-home-"));
+    const serviceDir = mkdtempSync(join(tmpdir(), "openark-svc-"));
+    try {
+      expect(resolveServicePython({ home, serviceDir, env: emptyEnv })).toBeNull();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(serviceDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("spawnService", () => {
+  it("returns null when no venv python exists (isolated home)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "openark-lifecycle-"));
+    const home = mkdtempSync(join(tmpdir(), "openark-home-"));
+    try {
+      expect(spawnService({ serviceDir: dir, home, env: {} })).toBeNull();
       expect(devVenvPython(dir)).toBe(join(dir, ".venv", "bin", "python"));
     } finally {
       rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
     }
   });
 
@@ -84,12 +189,14 @@ describe("ensureService", () => {
 
   it("gives up when spawning is impossible and health never comes up", async () => {
     const dir = mkdtempSync(join(tmpdir(), "openark-lifecycle-"));
+    const home = mkdtempSync(join(tmpdir(), "openark-home-"));
     try {
       const client = { health: vi.fn(async () => false) } as unknown as ServiceClient;
-      const result = await ensureService(client, { serviceDir: dir });
+      const result = await ensureService(client, { serviceDir: dir, home, env: {} });
       expect(result).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });
