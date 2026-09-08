@@ -13,7 +13,16 @@ import {
   readAgentDescription,
   uninstallAll,
 } from "./core/installer.js";
-import { devVenvPython, serviceDirFromEnv } from "./core/lifecycle.js";
+import {
+  clearServicePid,
+  devVenvPython,
+  isProcessAlive,
+  readServicePid,
+  serviceDirFromEnv,
+  stopService,
+  waitForHealth,
+  writeServicePid,
+} from "./core/lifecycle.js";
 import { ServiceClient } from "./core/service.js";
 
 const USAGE = `openark — modular agents for opencode
@@ -25,7 +34,12 @@ Commands:
   create <name> [--persona p]   create a new agent home (optionally seeded
                                 from a bundled persona, e.g. defoko)
   rm <name> --yes               delete an agent home (irreversible)
-  start                         start the openark service (uvicorn)
+  start [--foreground|-f]       start the openark service (daemon by default;
+                                --foreground runs attached for logs)
+  stop                          stop the openark service
+  restart [--foreground|-f]     stop + start the service (needed after
+                                openark.json, prompts/, or service code
+                                changes — see below)
   status                        check whether the service is up
   doctor [--fix]                check the setup for problems; --fix repairs
                                 what it can (shim, agent files, skills,
@@ -35,6 +49,13 @@ Commands:
   uninstall                     remove openark wiring from opencode (plugin
                                 shim, agent files, skills, commands)
   version                       print version
+
+Restart policy:
+  No restart needed (next session picks it up): agent.json toggles,
+  persona.core.md (.d/), persona.evolving.md (.d/), lessons.md, skills/.
+  Restart needed: ~/.openark/openark.json (port/model routing),
+  service prompts/ and service code, plugin code (also re-run install
+  and restart opencode itself for plugin changes).
 
 Environment:
   OPENARK_HOME            state root (default ~/.openark)
@@ -125,9 +146,34 @@ function servicePython(): string {
   return fail("service venv missing — run: openark install (or `make dev` in a dev checkout)");
 }
 
-function startService(): void {
+async function startService(foreground: boolean): Promise<void> {
   const python = servicePython();
   const config = readGlobalConfig();
+  const home = openarkHome();
+  if (foreground) {
+    const child = spawn(
+      python,
+      [
+        "-m",
+        "uvicorn",
+        "openark.app:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        String(config.servicePort),
+      ],
+      { stdio: "inherit" },
+    );
+    child.on("exit", (code) => process.exit(code ?? 0));
+    return;
+  }
+  stopStalePidFile(home);
+  const client = new ServiceClient(serviceBaseUrl(config));
+  if (await client.health()) {
+    const pid = readServicePid(home);
+    console.log(pid !== null ? `service: already up (pid ${pid})` : "service: already up");
+    return;
+  }
   const child = spawn(
     python,
     [
@@ -139,15 +185,69 @@ function startService(): void {
       "--port",
       String(config.servicePort),
     ],
-    { stdio: "inherit" },
+    { stdio: "ignore", detached: true },
   );
-  child.on("exit", (code) => process.exit(code ?? 0));
+  child.on("error", (err) => fail(`failed to start service: ${String(err)}`));
+  child.unref();
+  if (child.pid !== undefined) writeServicePid(home, child.pid);
+  if (await waitForHealth(client)) {
+    console.log(
+      child.pid !== undefined
+        ? `service: up on 127.0.0.1:${config.servicePort} (pid ${child.pid})`
+        : `service: up on 127.0.0.1:${config.servicePort}`,
+    );
+  } else {
+    fail("service did not become healthy in time — check ~/.openark/logs/");
+  }
+}
+
+function stopStalePidFile(home: string): void {
+  const pid = readServicePid(home);
+  if (pid !== null && !isProcessAlive(pid)) {
+    clearServicePid(home);
+  }
+}
+
+async function stopServiceCmd(): Promise<void> {
+  const config = readGlobalConfig();
+  const client = new ServiceClient(serviceBaseUrl(config));
+  const result = await stopService(client, { home: openarkHome(), port: config.servicePort });
+  if (result.stopped) {
+    console.log(`service: stopped (pid ${result.pid})`);
+  } else if (result.reason === "not-running") {
+    console.log("service: not running");
+  } else if (result.reason === "timeout") {
+    fail(`service pid ${result.pid} did not stop in time (SIGKILL sent)`);
+  } else {
+    fail("service seems up but no pid file found — kill the uvicorn process by hand");
+  }
+}
+
+async function restartServiceCmd(foreground: boolean): Promise<void> {
+  const config = readGlobalConfig();
+  const client = new ServiceClient(serviceBaseUrl(config));
+  const result = await stopService(client, { home: openarkHome(), port: config.servicePort });
+  if (result.stopped) {
+    console.log(`service: stopped (pid ${result.pid})`);
+  } else if (result.reason === "not-running") {
+    console.log("service: was not running");
+  } else if (result.reason === "timeout") {
+    fail(`service pid ${result.pid} did not stop in time — aborting restart`);
+  } else {
+    fail("service seems up but no pid file found — kill the uvicorn process by hand first");
+  }
+  await startService(foreground);
 }
 
 async function checkService(): Promise<void> {
   const config = readGlobalConfig();
   const client = new ServiceClient(serviceBaseUrl(config));
-  console.log((await client.health()) ? "service: up" : "service: down");
+  if (!(await client.health())) {
+    console.log("service: down");
+    return;
+  }
+  const pid = readServicePid(openarkHome());
+  console.log(pid !== null ? `service: up (pid ${pid})` : "service: up");
 }
 
 function printChecks(checks: DoctorCheck[]): void {
@@ -245,7 +345,13 @@ switch (command) {
     args[0] ? removeAgent(args[0], args.includes("--yes")) : fail("usage: openark rm <name> --yes");
     break;
   case "start":
-    startService();
+    await startService(args.includes("--foreground") || args.includes("-f"));
+    break;
+  case "stop":
+    await stopServiceCmd();
+    break;
+  case "restart":
+    await restartServiceCmd(args.includes("--foreground") || args.includes("-f"));
     break;
   case "status":
     await checkService();

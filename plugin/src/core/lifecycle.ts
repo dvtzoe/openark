@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { installedVenvPython } from "./bootstrap.js";
 import { DEFAULT_SERVICE_PORT, openarkHome } from "./config.js";
@@ -7,6 +7,7 @@ import type { ServiceClient } from "./service.js";
 
 const HEALTH_TIMEOUT_MS = 20000;
 const POLL_INTERVAL_MS = 500;
+const STOP_TIMEOUT_MS = 10000;
 
 export type SpawnOptions = {
   serviceDir?: string;
@@ -73,6 +74,15 @@ export function spawnService(options: SpawnOptions = {}): ReturnType<typeof spaw
   );
   child.on("error", () => {});
   child.unref();
+  // Track the pid so `openark stop` can find auto-spawned services too.
+  // Best-effort: a missing home dir or read-only FS must never break spawn.
+  if (child.pid !== undefined) {
+    try {
+      writeServicePid(options.home ?? openarkHome(), child.pid);
+    } catch {
+      // ignore — stop falls back to port discovery
+    }
+  }
   options.logger?.(`spawned openark service on 127.0.0.1:${port}`);
   return child;
 }
@@ -85,4 +95,117 @@ export async function ensureService(
   const spawned = spawnService(options);
   if (!spawned) return false;
   return waitForHealth(client);
+}
+
+// --- Service process management (openark stop/restart) ----------------------
+// The service runs detached (see spawnService), so its pid is tracked in
+// ~/.openark/service.pid. `openark start` (daemon mode) writes it,
+// `openark stop` kills it, `openark restart` is stop + start.
+
+export function pidFilePath(home: string = openarkHome()): string {
+  return join(home, "service.pid");
+}
+
+export function readServicePid(home: string = openarkHome()): number | null {
+  try {
+    const raw = readFileSync(pidFilePath(home), "utf8").trim();
+    const pid = Number.parseInt(raw, 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeServicePid(home: string, pid: number): void {
+  writeFileSync(pidFilePath(home), `${pid}\n`);
+}
+
+export function clearServicePid(home: string = openarkHome()): void {
+  try {
+    rmSync(pidFilePath(home), { force: true });
+  } catch {
+    // best-effort
+  }
+}
+
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function waitForDown(
+  client: ServiceClient,
+  timeoutMs = STOP_TIMEOUT_MS,
+  pollMs = POLL_INTERVAL_MS,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await client.health())) return true;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return false;
+}
+
+function pidOnPort(port: number): number | null {
+  // Best-effort discovery for services started before the pid file existed
+  // (e.g. older auto-spawns). lsof may not be installed — then return null
+  // and let the caller report "kill it by hand".
+  try {
+    const res = spawnSync("lsof", ["-ti", `:${port}`], { encoding: "utf8" });
+    if (res.status !== 0 || !res.stdout) return null;
+    const first = res.stdout.trim().split(/\s+/)[0] ?? "";
+    const pid = Number.parseInt(first, 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+export type StopResult =
+  | { stopped: true; pid: number }
+  | { stopped: false; reason: "not-running" | "no-pid" | "timeout"; pid?: number };
+
+export async function stopService(
+  client: ServiceClient,
+  options: { home?: string; port?: number } = {},
+): Promise<StopResult> {
+  const home = options.home ?? openarkHome();
+  const port = options.port ?? DEFAULT_SERVICE_PORT;
+  let pid = readServicePid(home);
+  if (pid !== null && !isProcessAlive(pid)) {
+    // Stale pid file from a dead process — drop it and keep looking.
+    clearServicePid(home);
+    pid = null;
+  }
+  pid ??= pidOnPort(port);
+  if (pid === null) {
+    return (await client.health())
+      ? { stopped: false, reason: "no-pid" }
+      : { stopped: false, reason: "not-running" };
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    clearServicePid(home);
+    return (await client.health())
+      ? { stopped: false, reason: "no-pid", pid }
+      : { stopped: false, reason: "not-running", pid };
+  }
+  const down = await waitForDown(client);
+  if (!down) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+    if (!(await waitForDown(client, 5000))) {
+      return { stopped: false, reason: "timeout", pid };
+    }
+  }
+  if (readServicePid(home) === pid) clearServicePid(home);
+  return { stopped: true, pid };
 }

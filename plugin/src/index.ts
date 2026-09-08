@@ -5,14 +5,16 @@ import { readGlobalConfig, resolveAgentName, serviceBaseUrl } from "./core/confi
 import { buildHooks } from "./core/hooks.js";
 import { ensureService } from "./core/lifecycle.js";
 import { collectInjections, loadModules } from "./core/loader.js";
+import { createPluginLogger } from "./core/log.js";
 import { createRuntime } from "./core/runtime.js";
 import type { Runtime } from "./core/runtime.js";
 import { ServiceClient } from "./core/service.js";
 import type { ModuleTool, ToolExecuteContext } from "./core/types.js";
 
-const log = (level: "info" | "warn" | "error", message: string) => {
-  console[level](`[openark:${level}] ${message}`);
-};
+// Never console.* in the plugin runtime — the opencode TUI owns stdio
+// and any write paints over it. All plugin logs go to
+// ~/.openark/logs/plugin.log via createPluginLogger (stderr mirror only
+// when OPENARK_DEBUG=1).
 
 // Tool names/descriptions are the same for every agent (they come from the
 // module's own code, not agent state), so they're enumerated once here to
@@ -64,6 +66,7 @@ function collectTools(runtime: Runtime): Record<string, ReturnType<typeof tool>>
 }
 
 export const plugin: Plugin = async (input) => {
+  const log = createPluginLogger();
   const config = readGlobalConfig();
   const service = new ServiceClient(serviceBaseUrl(config));
   const defaultAgent = resolveAgentName();

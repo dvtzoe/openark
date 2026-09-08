@@ -127,11 +127,37 @@ describe("createRuntime", () => {
     expect(runtime.agent("never-noted")).toBe("defoko");
   });
 
-  it("noting a session for an unavailable agent falls back to the default", async () => {
+  it("noting a session for an unavailable agent is a passthrough no-op (no fallback)", async () => {
     const service = fakeService({ "/v1/agents/defoko": manifest({ memory: true }) });
     const runtime = await createRuntime(deps(service, []));
     await runtime.noteSession("s1", "ghost");
-    expect(runtime.agent("s1")).toBe("defoko");
+    // The session keeps its own agent name (for diagnostics) but gets no
+    // modules/injections — it must NOT inherit the default agent's persona.
+    expect(runtime.agent("s1")).toBe("ghost");
+    expect(runtime.active("s1")).toEqual([]);
+    expect(runtime.enabledModules("s1")).toEqual([]);
+    expect(await runtime.injections("s1")).toBe("");
+  });
+
+  it("native opencode agents (build/plan) never hit the service", async () => {
+    const service = fakeService({ "/v1/agents/defoko": manifest({ memory: true }) });
+    const runtime = await createRuntime(deps(service, []));
+    await runtime.noteSession("s1", "build");
+    await runtime.noteSession("s2", "plan");
+    expect(runtime.agent("s1")).toBe("build");
+    expect(runtime.active("s1")).toEqual([]);
+    expect(await runtime.injections("s1")).toBe("");
+    expect(service.calls.filter((c) => c === "/v1/agents/build")).toEqual([]);
+    expect(service.calls.filter((c) => c === "/v1/agents/plan")).toEqual([]);
+  });
+
+  it("a 404 is cached — repeat sessions for the same unknown agent skip the fetch", async () => {
+    const service = fakeService({ "/v1/agents/defoko": manifest({ memory: true }) });
+    const runtime = await createRuntime(deps(service, []));
+    await runtime.noteSession("s1", "ghost");
+    await runtime.noteSession("s2", "ghost");
+    const hits = service.calls.filter((c) => c === "/v1/agents/ghost").length;
+    expect(hits).toBe(1);
   });
 
   it("dispatches user messages, tool results, and session end", async () => {

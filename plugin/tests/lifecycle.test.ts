@@ -6,10 +6,15 @@ import { installedVenvPython } from "../src/core/bootstrap";
 import {
   devVenvPython,
   ensureService,
+  isProcessAlive,
+  pidFilePath,
+  readServicePid,
   resolveServicePython,
   serviceDirFromEnv,
   spawnService,
+  stopService,
   waitForHealth,
+  writeServicePid,
 } from "../src/core/lifecycle";
 import type { ServiceClient } from "../src/core/service";
 
@@ -162,11 +167,12 @@ describe("spawnService", () => {
 
   it("spawns uvicorn when the venv exists", async () => {
     const dir = mkdtempSync(join(tmpdir(), "openark-lifecycle-"));
+    const home = mkdtempSync(join(tmpdir(), "openark-home-"));
     try {
       mkdirSync(join(dir, ".venv", "bin"), { recursive: true });
       const python = join(dir, ".venv", "bin", "python");
       writeFileSync(python, "#!/bin/sh\nexit 0\n");
-      const child = spawnService({ serviceDir: dir, port: 8799 });
+      const child = spawnService({ serviceDir: dir, home, port: 8799, env: {} });
       expect(child).not.toBeNull();
       await new Promise((resolve) => {
         (child ?? { on: () => {}, once: () => {} }).once?.("exit", resolve);
@@ -174,6 +180,28 @@ describe("spawnService", () => {
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("writes the spawned pid so stop can find it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "openark-lifecycle-"));
+    const home = mkdtempSync(join(tmpdir(), "openark-home-"));
+    try {
+      mkdirSync(join(dir, ".venv", "bin"), { recursive: true });
+      const python = join(dir, ".venv", "bin", "python");
+      writeFileSync(python, "#!/bin/sh\nsleep 30\n");
+      const child = spawnService({ serviceDir: dir, home, port: 8798, env: {} });
+      expect(child).not.toBeNull();
+      expect(readServicePid(home)).toBe(child?.pid ?? null);
+      try {
+        child?.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });
@@ -196,6 +224,46 @@ describe("ensureService", () => {
       expect(result).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("service pid file", () => {
+  it("round-trips a pid and reports liveness", () => {
+    const home = mkdtempSync(join(tmpdir(), "openark-home-"));
+    try {
+      expect(readServicePid(home)).toBeNull();
+      expect(pidFilePath(home)).toBe(join(home, "service.pid"));
+      writeServicePid(home, process.pid);
+      expect(readServicePid(home)).toBe(process.pid);
+      expect(isProcessAlive(process.pid)).toBe(true);
+      expect(isProcessAlive(2147483647)).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("stop reports not-running when nothing is up and no pid file", async () => {
+    const home = mkdtempSync(join(tmpdir(), "openark-home-"));
+    try {
+      const client = { health: vi.fn(async () => false) } as unknown as ServiceClient;
+      const result = await stopService(client, { home, port: 8797 });
+      expect(result).toEqual({ stopped: false, reason: "not-running" });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("stop clears a stale pid file without killing anything", async () => {
+    const home = mkdtempSync(join(tmpdir(), "openark-home-"));
+    try {
+      writeServicePid(home, 2147483647);
+      const client = { health: vi.fn(async () => false) } as unknown as ServiceClient;
+      const result = await stopService(client, { home, port: 8797 });
+      expect(result.stopped).toBe(false);
+      expect(readServicePid(home)).toBeNull();
+    } finally {
       rmSync(home, { recursive: true, force: true });
     }
   });

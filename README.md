@@ -98,11 +98,27 @@ persona, memories, and lessons at session start. The slash commands:
 openark list              # list agents and their descriptions
 openark create <name>     # blank agent home (edit persona.core.md yourself)
 openark rm <name> --yes   # delete an agent home (irreversible)
-openark status            # service: up / down
+openark status            # service: up / down (with pid)
+openark start             # run the service detached (pid in ~/.openark/service.pid)
+openark stop              # stop the service
+openark restart           # stop + start (see restart policy below)
 openark doctor            # check the setup for problems
 openark doctor --fix      # ... and repair what it can (shim, agent files,
                           #     skills, commands, service venv)
 ```
+
+### Restart policy
+
+No restart — the next session picks it up: `agent.json` module toggles,
+`persona.core.md` (and `.d/` drop-ins), `persona.evolving.md` (and `.d/`),
+`lessons.md`, `skills/`.
+
+Restart the service (`openark restart`): `~/.openark/openark.json`
+(port / per-task model routing), service `prompts/`, service code.
+
+Restart opencode itself (plus `openark install`): plugin code changes.
+Plugin logs live in `~/.openark/logs/plugin.log` (never stdio, so the
+opencode TUI stays clean); set `OPENARK_DEBUG=1` to also mirror to stderr.
 
 Agent state lives in `~/.openark/agents/<name>/` as plain files:
 `agent.json` (manifest), `persona.core.md` (you own this, the agent never

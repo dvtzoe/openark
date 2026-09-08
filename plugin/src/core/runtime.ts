@@ -34,6 +34,19 @@ type Loaded = {
   active: OpenArkModule[];
 };
 
+// opencode's built-in agents are never openark agents — skip the service
+// entirely for them (no fetch, no log) and treat their sessions as a
+// passthrough no-op. Anything else that 404s joins `unavailable` below.
+const NATIVE_PASSTHROUGH = new Set(["build", "plan"]);
+
+function isNotFound(err: unknown): boolean {
+  if (typeof err === "object" && err !== null && "status" in err) {
+    if ((err as { status?: unknown }).status === 404) return true;
+  }
+  const text = String(err);
+  return text.includes("404") || text.includes("no such agent") || text.includes("not found");
+}
+
 // Every session gets its own ModuleContext (built fresh per call by
 // withSession below) so that concurrent sessions on different agents can
 // never observe or mutate each other's state — see docs/plans/
@@ -42,6 +55,11 @@ type Loaded = {
 export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
   const loaded = new Map<string, Loaded>();
   const sessionAgent = new Map<string, string>();
+  // Agents the service answered 404 for (plus the native passthroughs
+  // above): known-not-openark, so later sessions skip the fetch instead
+  // of paying one 404 + one warn line per session first turn. Only 404s
+  // are cached here — transient errors (service down) retry next time.
+  const unavailable = new Set<string>(NATIVE_PASSTHROUGH);
   // Which (session, agent) pairs have already had their "session start"
   // manifest read. MODULE_SPEC.md promises the manifest is re-read (so a
   // module toggle takes effect) at session start, not cached for the whole
@@ -50,6 +68,7 @@ export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
 
   async function loadAgent(name: string): Promise<Loaded | null> {
     if (loaded.has(name)) return loaded.get(name) ?? null;
+    if (unavailable.has(name)) return null;
     try {
       const manifest = await deps.service.getJSON<AgentManifest>(`/v1/agents/${name}`);
       const ctx: ModuleContext = {
@@ -65,6 +84,13 @@ export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
       deps.log("info", `agent "${name}" loaded modules: ${names}`);
       return entry;
     } catch (err) {
+      if (isNotFound(err)) {
+        // Not an openark agent (e.g. opencode's native build/plan): quiet
+        // passthrough, cached so the next session doesn't pay another 404.
+        unavailable.add(name);
+        deps.log("info", `agent "${name}" is not an openark agent — passthrough (no modules)`);
+        return null;
+      }
       deps.log("warn", `agent "${name}" unavailable: ${String(err)}`);
       return null;
     }
@@ -73,8 +99,14 @@ export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
   const defaultLoaded = await loadAgent(deps.defaultAgent);
 
   function resolve(sessionID?: string): Loaded | null {
-    const name = (sessionID && sessionAgent.get(sessionID)) || deps.defaultAgent;
-    return loaded.get(name) ?? defaultLoaded;
+    if (sessionID && sessionAgent.has(sessionID)) {
+      // Explicitly noted session: an unknown agent is a deliberate
+      // passthrough no-op — never fall back to the default agent's
+      // persona/modules (that would inject defoko into build sessions).
+      const name = sessionAgent.get(sessionID) as string;
+      return loaded.get(name) ?? null;
+    }
+    return defaultLoaded;
   }
 
   function withSession(entry: Loaded, sessionID?: string): ModuleContext {
@@ -82,7 +114,10 @@ export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
   }
 
   return {
-    agent: (sessionID) => resolve(sessionID)?.agent ?? deps.defaultAgent,
+    agent: (sessionID) => {
+      if (sessionID && sessionAgent.has(sessionID)) return sessionAgent.get(sessionID) as string;
+      return resolve(sessionID)?.agent ?? deps.defaultAgent;
+    },
     manifest: (sessionID) => resolve(sessionID)?.ctx.manifest ?? null,
     active: (sessionID) => resolve(sessionID)?.active ?? [],
     ctx: (sessionID) => {
