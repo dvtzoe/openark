@@ -202,3 +202,34 @@ describe("reflectionModule", () => {
     await expect(tools[2]?.execute({})).rejects.toThrow("id is required");
   });
 });
+
+describe("reflectionModule correction capture", () => {
+  it("captures a correction that arrives after the failure was flushed at idle", async () => {
+    const service = fakeService();
+    const context = ctx(service, "session-correct");
+
+    // Turn 1: tool fails, idle flushes the failure (no correction yet).
+    await reflectionModule.onToolResult?.(context, {
+      tool: "bash",
+      ok: false,
+      durationMs: 5,
+      summary: "exit 1",
+    });
+    await reflectionModule.onSessionEnd?.(context);
+    const calls = (service.postJSON as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1].messages).toEqual([]);
+
+    // Turn 2: the user corrects in the next message — it must still reach
+    // the service instead of being dropped because the buffer was cleared.
+    await reflectionModule.onUserMessage?.(context, { role: "user", text: "no, use pnpm" });
+    await reflectionModule.onSessionEnd?.(context);
+    expect(calls).toHaveLength(2);
+    expect(calls[1][1]).toEqual({ failures: [], messages: ["no, use pnpm"] });
+
+    // Once the correction has been flushed, plain chatter does not re-fire.
+    await reflectionModule.onUserMessage?.(context, { role: "user", text: "thanks" });
+    await reflectionModule.onSessionEnd?.(context);
+    expect(calls).toHaveLength(2);
+  });
+});

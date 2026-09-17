@@ -11,14 +11,22 @@ import type {
 } from "../core/types.js";
 import type { components } from "../generated/api-types.js";
 
-const memoryAddArgs = z.object({ text: requiredString("text is required") });
-const channelShareArgs = z.object({
+const memoryAddShape = { text: requiredString("text is required") };
+const memoryAddArgs = z.object(memoryAddShape);
+const channelShareShape = {
   text: requiredString("text is required"),
   channel: requiredString("channel is required"),
   kind: z.unknown().transform((v) => (v === "lesson" ? "lesson" : "memory")),
-});
-const channelItemsArgs = z.object({ channel: requiredString("channel is required") });
-const channelSubscribeArgs = z.object({ channel: requiredString("channel is required") });
+};
+const channelShareArgs = z.object(channelShareShape);
+const channelItemsShape = { channel: requiredString("channel is required") };
+const channelItemsArgs = z.object(channelItemsShape);
+const channelSubscribeShape = {
+  channel: requiredString("channel is required"),
+  subscribe: z.boolean().optional(),
+};
+const channelSubscribeArgs = z.object(channelSubscribeShape);
+const memorySearchShape = { q: z.string().optional() };
 
 type MemoryItem = components["schemas"]["MemoryItem"];
 type RecallResponse = components["schemas"]["MemoryRecallResponse"];
@@ -74,13 +82,19 @@ export const memoryModule: OpenArkModule = {
     if (!transcript?.length) return;
     const conversation = transcript.join("\n");
     transcripts.delete(key);
-    const project = currentProject();
+    const project = currentProject(ctx.directory);
     await ctx.service
       .postJSON<IngestResponse>(`/v1/agents/${ctx.agent}/memory/ingest`, {
         text: conversation,
         project,
       })
       .catch(() => undefined);
+  },
+
+  onSessionDeleted(ctx) {
+    // No idle flush arrived (session deleted mid-flight) — drop the buffer
+    // instead of leaking it for the life of the process.
+    transcripts.delete(ctx.session?.id ?? "");
   },
 
   async injections(ctx: ModuleContext): Promise<InjectionBlock[]> {
@@ -108,6 +122,7 @@ export const memoryModule: OpenArkModule = {
       {
         name: "memory_search",
         description: "Search this agent's long-term memory",
+        argsSchema: memorySearchShape,
         execute: async (args) => {
           const q = typeof args.q === "string" ? args.q : "";
           return ctx.service.getJSON<RecallResponse>(
@@ -118,6 +133,7 @@ export const memoryModule: OpenArkModule = {
       {
         name: "memory_add",
         description: "Store a durable fact in this agent's long-term memory",
+        argsSchema: memoryAddShape,
         execute: async (args, context?: ToolExecuteContext) => {
           const { text } = memoryAddArgs.parse(args);
           return ctx.service.postJSON<MutationResponse>(`/v1/agents/${ctx.agent}/memory`, {
@@ -131,6 +147,7 @@ export const memoryModule: OpenArkModule = {
         description:
           "Share a memory or lesson with a channel other agents can subscribe to. " +
           "The user must confirm before pushing. Channel names look like 'team' or '#team'.",
+        argsSchema: channelShareShape,
         execute: async (args) => {
           const { text, channel, kind } = channelShareArgs.parse(args);
           return ctx.service.postJSON<ChannelItem>(
@@ -142,6 +159,7 @@ export const memoryModule: OpenArkModule = {
       {
         name: "channel_items",
         description: "List items shared in a channel",
+        argsSchema: channelItemsShape,
         execute: async (args) => {
           const { channel } = channelItemsArgs.parse(args);
           return ctx.service.getJSON<ChannelItem[]>(`/v1/channels/${encodeURIComponent(channel)}`);
@@ -150,6 +168,7 @@ export const memoryModule: OpenArkModule = {
       {
         name: "channel_subscribe",
         description: "Subscribe (or unsubscribe with subscribe: false) to a channel",
+        argsSchema: channelSubscribeShape,
         execute: async (args) => {
           const { channel } = channelSubscribeArgs.parse(args);
           const action = args.subscribe === false ? "unsubscribe" : "subscribe";

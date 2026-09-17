@@ -16,10 +16,10 @@ class FakeRunner:
         self._available = available
         self.calls = []
 
-    def available(self, task):
+    def available(self, task, preferred=None):
         return self._available
 
-    def complete(self, task, prompt):
+    def complete(self, task, prompt, preferred=None):
         self.calls.append((task, prompt))
         if self.fail:
             raise self.fail
@@ -194,3 +194,40 @@ def test_reflect_llm_error_degrades(registry):
     module = make_module(FakeRunner(fail=RuntimeError("boom")))
     result = module.reflect(registry, "defoko", failures=[{"tool": "bash", "summary": "x"}])
     assert result.reason == "llm-error"
+
+
+def test_add_rejects_multiline_rule(registry):
+    module = make_module(FakeRunner())
+    with pytest.raises(ValueError):
+        module.add(registry, "defoko", "line one\nline two")
+
+
+def test_rule_containing_source_literal_roundtrips(registry):
+    module = make_module(FakeRunner())
+    rule = "Prefer X (source: docs) always"
+    res = module.add(registry, "defoko", rule)
+    assert res.added is not None
+    listed = module.list(registry.agent_home("defoko"))
+    assert [e.rule for e in listed] == [rule]
+    assert listed[0].id == res.added.id
+
+
+def test_register_hits_survives_corrupt_state_file(registry):
+    home = registry.agent_home("defoko")
+    data = home / "data"
+    data.mkdir(parents=True, exist_ok=True)
+    (data / "lessons_state.json").write_text("[1, 2]")
+    module = make_module(FakeRunner())
+    module.add(registry, "defoko", "Rule one")
+    res = module.register_hits(registry, "defoko", [], "session-1")
+    assert res.counted is True
+
+
+def test_reflect_prompt_marks_retired_rules(registry):
+    runner = FakeRunner(output="RULE: New rule")
+    module = make_module(runner)
+    module.add(registry, "defoko", "Retired one")
+    module.retire(registry, "defoko", lesson_id("Retired one"))
+    module.reflect(registry, "defoko", failures=[{"tool": "bash", "summary": "x"}])
+    prompt = runner.calls[0][1]
+    assert "retired: re-emit if it clearly recurs" in prompt

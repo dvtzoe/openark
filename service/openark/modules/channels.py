@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from ..core.models import ChannelItem
-from ..core.registry import AgentRegistry
+from ..core.registry import AgentRegistry, _atomic_write_text
 
 MAX_CHANNEL_ITEMS = 1000
 CHANNEL_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
@@ -27,6 +28,11 @@ class ChannelsStore:
     def __init__(self, root: Path):
         self.root = root
         self.channels_dir = root / "channels"
+        # FastAPI serves these sync endpoints from a threadpool, so two
+        # sessions can push/subscribe concurrently. Serialize the
+        # read-modify-write paths so appends/trims/subscriptions can't be
+        # lost to interleaving.
+        self._lock = threading.Lock()
 
     def push(
         self,
@@ -40,7 +46,8 @@ class ChannelsStore:
         text = text.strip()
         if not text:
             raise ValueError("channel item text must not be empty")
-        kind = kind if kind in ("memory", "lesson") else "memory"
+        if kind not in ("memory", "lesson"):
+            raise ValueError(f"invalid channel item kind: {kind!r}")
         item = {
             "id": uuid.uuid4().hex[:12],
             "text": text,
@@ -50,9 +57,10 @@ class ChannelsStore:
         }
         path = self._items_path(channel)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a") as fh:
-            fh.write(json.dumps(item) + "\n")
-        self._trim(path)
+        with self._lock:
+            with path.open("a") as fh:
+                fh.write(json.dumps(item) + "\n")
+            self._trim(path)
         registry.audit(agent, "channel.push", f"#{channel} {item['id']}")
         return ChannelItem(id=item["id"], text=text, source_agent=agent, kind=kind)
 
@@ -66,21 +74,23 @@ class ChannelsStore:
 
     def subscribe(self, registry: AgentRegistry, agent: str, channel: str) -> list[str]:
         channel = normalize_channel_name(channel)
-        manifest = registry.get(agent)
-        if channel not in manifest.channels.subscriptions:
-            manifest.channels.subscriptions.append(channel)
-            registry.save_manifest(manifest)
-            registry.audit(agent, "channel.subscribe", f"#{channel}")
-        return manifest.channels.subscriptions
+        with self._lock:
+            manifest = registry.get(agent)
+            if channel not in manifest.channels.subscriptions:
+                manifest.channels.subscriptions.append(channel)
+                registry.save_manifest(manifest)
+                registry.audit(agent, "channel.subscribe", f"#{channel}")
+            return list(manifest.channels.subscriptions)
 
     def unsubscribe(self, registry: AgentRegistry, agent: str, channel: str) -> list[str]:
         channel = normalize_channel_name(channel)
-        manifest = registry.get(agent)
-        if channel in manifest.channels.subscriptions:
-            manifest.channels.subscriptions.remove(channel)
-            registry.save_manifest(manifest)
-            registry.audit(agent, "channel.unsubscribe", f"#{channel}")
-        return manifest.channels.subscriptions
+        with self._lock:
+            manifest = registry.get(agent)
+            if channel in manifest.channels.subscriptions:
+                manifest.channels.subscriptions.remove(channel)
+                registry.save_manifest(manifest)
+                registry.audit(agent, "channel.unsubscribe", f"#{channel}")
+            return list(manifest.channels.subscriptions)
 
     def subscribed_items(
         self,
@@ -107,20 +117,25 @@ class ChannelsStore:
     def _read(self, path: Path) -> list[dict[str, Any]]:
         if not path.exists():
             return []
-        items = []
+        items: list[dict[str, Any]] = []
         for line in path.read_text().splitlines():
-            if line.strip():
-                try:
-                    items.append(json.loads(line))
-                except ValueError:
-                    continue
+            if not line.strip():
+                continue
+            try:
+                raw = json.loads(line)
+            except ValueError:
+                continue
+            # A line can be valid JSON and still be a scalar (null, 5, "x")
+            # from a hand-edit or corruption; only dicts are items.
+            if isinstance(raw, dict):
+                items.append(raw)
         return items
 
     def _trim(self, path: Path) -> None:
         items = self._read(path)
         if len(items) > MAX_CHANNEL_ITEMS:
             kept = items[-MAX_CHANNEL_ITEMS:]
-            path.write_text("".join(json.dumps(i) + "\n" for i in kept))
+            _atomic_write_text(path, "".join(json.dumps(i) + "\n" for i in kept))
 
 
 def _matches(q: str, text: str) -> bool:

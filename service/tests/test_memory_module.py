@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from openark.core.llm import LlmUnavailable
+from openark.core.llm import LlmUnavailable, ResolvedModel
 from openark.core.models import MemoryIngestResponse
 from openark.modules.memory import MemoryModule, _keyword_rerank, _parse_facts
 
@@ -16,8 +16,8 @@ class FakeStore:
     def add(self, agent, text, metadata, infer):
         self.adds.append({"agent": agent, "text": text, "metadata": metadata, "infer": infer})
         if isinstance(text, list):
-            return {"results": [{"id": f"f{i}", "event": "ADD"} for i in range(len(text))]}
-        return {"id": "m1", "event": "ADD"}
+            return [{"id": f"f{i}", "event": "ADD"} for i in range(len(text))]
+        return [{"id": "m1", "event": "ADD"}]
 
     def search(self, agent, query, limit):
         self.searches.append(query)
@@ -30,17 +30,33 @@ class FakeStore:
 
 class FakeRunner:
     def __init__(
-        self, output="User works in TypeScript\nUser has a dog", fail=None, available=True
+        self,
+        output="User works in TypeScript\nUser has a dog",
+        fail=None,
+        available=True,
+        session_id=None,
     ):
         self.output = output
         self.fail = fail
         self._available = available
+        self._session_id = session_id
         self.calls: list[tuple[str, str]] = []
 
-    def available(self, task):
+    def available(self, task, preferred=None):
         return self._available
 
-    def complete(self, task, prompt):
+    def route(self, task, preferred=None):
+        if not self._available:
+            return None
+        return ResolvedModel(
+            model="m",
+            base_url="http://x/v1",
+            api_key="k",
+            kind="openai",
+            session_id=self._session_id,
+        )
+
+    def complete(self, task, prompt, preferred=None):
         self.calls.append((task, prompt))
         if self.fail:
             raise self.fail
@@ -48,7 +64,7 @@ class FakeRunner:
 
 
 def make_module(store, runner=None):
-    return MemoryModule(store_factory=lambda home: store, runner=runner)
+    return MemoryModule(store_factory=lambda home, preferred=None: store, runner=runner)
 
 
 HOME = Path("/tmp/openark-fake-home")
@@ -150,9 +166,25 @@ def test_ingest_extracts_and_batches_facts():
     assert runner.calls[0][0] == "extraction"
     assert "I love vitest" in runner.calls[0][1]
     batch = store.adds[0]
-    assert batch["text"] == ["User works in TypeScript", "User has a dog"]
+    assert batch["text"] == [
+        {"role": "user", "content": "User works in TypeScript"},
+        {"role": "user", "content": "User has a dog"},
+    ]
     assert batch["metadata"] == {"source": "extraction", "project": "openark"}
-    assert batch["infer"] is True
+    assert batch["infer"] is False
+
+
+def test_ingest_reports_persisted_count_from_store():
+    class NoopStore(FakeStore):
+        def add(self, agent, text, metadata, infer):
+            self.adds.append({"agent": agent, "text": text, "metadata": metadata, "infer": infer})
+            return []
+
+    store = NoopStore()
+    module = make_module(store, runner=FakeRunner())
+    result = module.ingest(HOME, "defoko", "user: I love vitest")
+    assert result.added == 0
+    assert result.facts == ["User works in TypeScript", "User has a dog"]
 
 
 def test_ingest_without_llm_is_noop():
@@ -192,6 +224,11 @@ def test_parse_facts_strips_bullets_and_caps():
     ]
 
 
+def test_parse_facts_skips_model_preambles():
+    output = "Facts:\n- User likes tea\n# Notes\n```\n1. User has a cat\n"
+    assert _parse_facts(output) == ["User likes tea", "1. User has a cat"]
+
+
 def test_parse_facts_caps_at_50():
     assert len(_parse_facts("\n".join(f"fact {i}" for i in range(100)))) == 50
 
@@ -202,3 +239,28 @@ def test_keyword_rerank_boosts_overlap():
         {"id": "b", "memory": "deploy with vercel pipeline", "score": 0.4},
     ]
     assert [r["id"] for r in _keyword_rerank("deploy vercel", results, 1)] == ["b"]
+
+
+def test_embedder_config_ignores_selected_chat_model(monkeypatch):
+    from openark.modules.memory import Mem0StoreFactory
+
+    calls: list[tuple[str, str | None]] = []
+
+    def fake_resolve(task, preferred=None):
+        calls.append((task, preferred))
+        return None
+
+    monkeypatch.setattr("openark.modules.memory.resolve_route", fake_resolve)
+    config = Mem0StoreFactory()._embedder_config()
+    assert config["provider"] == "fastembed"
+    assert calls == [("embeddings", None)]
+
+
+def test_infer_enabled_for_direct_routes():
+    module = make_module(FakeStore(), runner=FakeRunner())
+    assert module._infer_available() is True
+
+
+def test_infer_disabled_for_gateway_routes():
+    module = make_module(FakeStore(), runner=FakeRunner(session_id="openark-background"))
+    assert module._infer_available("opencode-go/deepseek-v4.1-flash") is False

@@ -169,3 +169,47 @@ def test_create_copies_bundled_persona_dropins(registry, monkeypatch, tmp_path):
     assert "Stay boxed" in core
     assert "Likes boxes" in evolving
     assert (home / "persona.evolving.md.d" / "10-prefs.md").read_text() == "- Likes boxes\n"
+
+
+def test_list_skips_non_utf8_manifest(registry):
+    registry.create("good")
+    bad_home = registry.agent_home("bad")
+    bad_home.mkdir(parents=True)
+    (bad_home / "agent.json").write_bytes(b"\xff\xfe{}")
+
+    assert [m.name for m in registry.list()] == ["good"]
+
+
+def test_get_corrupted_manifest_raises_not_found(registry):
+    registry.create("defoko")
+    (registry.agent_home("defoko") / "agent.json").write_text("{broken")
+    with pytest.raises(AgentNotFound):
+        registry.get("defoko")
+
+
+def test_get_invalid_name_raises_not_found(registry):
+    with pytest.raises(AgentNotFound):
+        registry.get("../escape")
+    with pytest.raises(AgentNotFound):
+        registry.get(".hidden")
+
+
+def test_create_with_incomplete_bundled_persona_rolls_back(registry, monkeypatch, tmp_path):
+    from openark.core import registry as registry_mod
+
+    source = tmp_path / "personas" / "broken"
+    source.mkdir(parents=True)
+    (source / "persona.core.md").write_text("# core\n")  # persona.evolving.md missing
+    monkeypatch.setattr(registry_mod, "BUNDLED_PERSONAS", tmp_path / "personas")
+
+    with pytest.raises(ValueError):
+        registry.create("half", persona="broken")
+    assert not registry.agent_home("half").exists()
+
+
+def test_audit_creates_missing_log_file(registry):
+    registry.create("defoko")
+    log = registry.agent_home("defoko") / "logs" / "audit.log"
+    log.unlink()
+    registry.audit("defoko", "test.action", "detail")
+    assert "test.action" in log.read_text()

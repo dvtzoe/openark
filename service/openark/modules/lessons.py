@@ -17,14 +17,16 @@ from ..core.models import (
     ReflectResponse,
 )
 from ..core.prompts import PromptSpec, load_prompt, render
-from ..core.registry import AgentRegistry
+from ..core.registry import AgentRegistry, _atomic_write_text
 
 logger = logging.getLogger(__name__)
 
 RETIRE_AFTER_STALE_SESSIONS = 5
 MAX_REMEMBERED_SESSIONS = 50
 
-LINE_RE = re.compile(r"^- \[(active|retired)\] (.+?) \(source: (.*?), hits: (\d+), stale: (\d+)\)$")
+# Rule text is greedy so a rule containing the literal " (source: " still
+# round-trips: the final metadata group is the one that wins.
+LINE_RE = re.compile(r"^- \[(active|retired)\] (.+) \(source: (.*?), hits: (\d+), stale: (\d+)\)$")
 
 
 @dataclass
@@ -85,6 +87,7 @@ class LessonsModule:
         agent: str,
         failures: list[dict[str, Any]],
         messages: list[str] | None = None,
+        preferred: str | None = None,
     ) -> ReflectResponse:
         messages = [m for m in (messages or []) if m.strip()]
         failure_lines = []
@@ -96,11 +99,21 @@ class LessonsModule:
         if not failure_lines and not messages:
             return ReflectResponse(reason="nothing-to-reflect")
 
-        if self._runner is None or not self._runner.available("reflection"):
+        if self._runner is None or not self._runner.available("reflection", preferred):
             return ReflectResponse(reason="no-model")
 
         parsed = _parse(registry.agent_home(agent) / "lessons.md")
-        existing_rules = "\n".join(f"- {entry.rule}" for entry in parsed.lessons) or "(none yet)"
+        # Mark retired rules as re-emittable so the model can reinstate a
+        # rule that clearly recurs; active rules are the "do not restate"
+        # set the prompt promises.
+        existing_rules = (
+            "\n".join(
+                f"- {entry.rule}"
+                + (" (retired: re-emit if it clearly recurs)" if entry.status == "retired" else "")
+                for entry in parsed.lessons
+            )
+            or "(none yet)"
+        )
         prompt = render(
             self._prompt(),
             lessons=existing_rules,
@@ -108,7 +121,7 @@ class LessonsModule:
             messages="\n".join(f"- {m}" for m in messages) or "(none)",
         )
         try:
-            output = self._runner.complete("reflection", prompt)
+            output = self._runner.complete("reflection", prompt, preferred)
         except LlmUnavailable as err:
             return ReflectResponse(reason=f"no-model: {err}")
         except Exception as err:
@@ -150,6 +163,10 @@ class LessonsModule:
         rule = rule.strip()
         if not rule:
             raise ValueError("rule must not be empty")
+        if "\n" in rule or "\r" in rule:
+            # A newline would render as two lines that _parse cannot match,
+            # making the lesson vanish on the next read.
+            raise ValueError("rule must be a single line")
         parsed = _parse(registry.agent_home(agent) / "lessons.md")
         entry = LessonEntry(id=lesson_id(rule), rule=rule, source=source)
         if _find_by_id(parsed.lessons, entry.id) is not None:
@@ -276,7 +293,7 @@ def _parse(path: Path) -> ParsedFile:
 def _write(path: Path, parsed: ParsedFile) -> None:
     lines = ["\n".join(parsed.header).rstrip(), ""]
     lines.extend(entry.render() for entry in parsed.lessons)
-    path.write_text("\n".join(lines).rstrip() + "\n")
+    _atomic_write_text(path, "\n".join(lines).rstrip() + "\n")
 
 
 def _state_path(agent_home: Path) -> Path:
@@ -290,7 +307,7 @@ def _load_state(agent_home: Path) -> dict[str, Any]:
     if path.exists():
         try:
             state = json.loads(path.read_text())
-            if isinstance(state.get("seen"), list):
+            if isinstance(state, dict) and isinstance(state.get("seen"), list):
                 return state
         except (ValueError, OSError):
             pass
@@ -298,4 +315,4 @@ def _load_state(agent_home: Path) -> dict[str, Any]:
 
 
 def _save_state(agent_home: Path, state: dict[str, Any]) -> None:
-    _state_path(agent_home).write_text(json.dumps(state, indent=2) + "\n")
+    _atomic_write_text(_state_path(agent_home), json.dumps(state, indent=2) + "\n")

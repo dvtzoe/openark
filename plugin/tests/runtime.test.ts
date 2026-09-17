@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createRuntime } from "../src/core/runtime";
+import { ServiceError } from "../src/core/service";
 import type { ModuleContext, OpenArkModule, ServiceLike } from "../src/core/types";
 
 function fakeService(agents: Record<string, unknown> = {}): ServiceLike & {
@@ -12,7 +13,7 @@ function fakeService(agents: Record<string, unknown> = {}): ServiceLike & {
     getJSON: vi.fn(async (path: string) => {
       calls.push(path);
       if (path in agents) return agents[path];
-      throw new Error("not found");
+      throw new ServiceError(path, 404, "no such agent");
     }),
     postJSON: vi.fn(async () => ({})),
   } as unknown as ServiceLike & { calls: string[] };
@@ -215,5 +216,41 @@ describe("createRuntime", () => {
     await runtime.onSessionEnd();
 
     expect(mod.events).toEqual(["user", "user", "end", "end"]);
+  });
+});
+
+describe("createRuntime selected model forwarding", () => {
+  it("scopes the service client to the session's selected model", async () => {
+    const service = fakeService({ "/v1/agents/defoko": manifest({ memory: true }) });
+    const scoped = { ...service, withModel: vi.fn() };
+    const withModel = vi.fn(() => scoped);
+    (service as unknown as { withModel?: unknown }).withModel = withModel;
+    const runtime = await createRuntime(deps(service, []));
+
+    await runtime.noteSession("s1", "defoko", "opencode-go/deepseek-v4.1-flash");
+
+    const context = runtime.ctx("s1");
+    expect(withModel).toHaveBeenCalledWith("opencode-go/deepseek-v4.1-flash");
+    expect(context?.service).toBe(scoped);
+    expect(context?.session?.model).toBe("opencode-go/deepseek-v4.1-flash");
+    // A session without a model keeps the plain service.
+    await runtime.noteSession("s2", "defoko");
+    expect(runtime.ctx("s2")?.service).toBe(service);
+  });
+
+  it("dispatches onSessionDeleted to active modules so buffers are freed", async () => {
+    const service = fakeService({ "/v1/agents/defoko": manifest({ memory: true }) });
+    const deleted: string[] = [];
+    const mod: OpenArkModule = {
+      name: "memory",
+      description: "",
+      onSessionDeleted: (context) => {
+        deleted.push(context.session?.id ?? "");
+      },
+    };
+    const runtime = await createRuntime(deps(service, [mod]));
+    await runtime.noteSession("s1", "defoko");
+    runtime.forgetSession("s1");
+    expect(deleted).toEqual(["s1"]);
   });
 });

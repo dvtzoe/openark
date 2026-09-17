@@ -10,6 +10,7 @@ from ...core.models import (
 from ...core.registry import AgentRegistry
 from ...modules.skills import SkillsModule
 from .agents import get_registry, require_agent
+from .deps import preferred_model
 
 router = APIRouter(tags=["skills"])
 
@@ -40,9 +41,10 @@ def distill_skill(
     request: DistillRequest,
     registry: AgentRegistry = Depends(get_registry),
     module=Depends(get_skills_module),
+    preferred: str | None = Depends(preferred_model),
 ):
     require_agent(registry, name)
-    return module.distill(registry, name, request.trace)
+    return module.distill(registry, name, request.trace, preferred=preferred)
 
 
 @router.post("/agents/{name}/skills/{slug}/verify", response_model=SkillVerifyResponse)

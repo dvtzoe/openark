@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -240,6 +241,37 @@ describe("service pid file", () => {
       expect(isProcessAlive(process.pid)).toBe(true);
       expect(isProcessAlive(2147483647)).toBe(false);
     } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects junk pid files instead of signalling a garbage pid", () => {
+    const home = mkdtempSync(join(tmpdir(), "openark-home-"));
+    try {
+      writeFileSync(pidFilePath(home), "123abc\n");
+      expect(readServicePid(home)).toBeNull();
+      writeFileSync(pidFilePath(home), "-5\n");
+      expect(readServicePid(home)).toBeNull();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to kill a live pid that is not the openark service", async () => {
+    const home = mkdtempSync(join(tmpdir(), "openark-home-"));
+    const child = spawn("sleep", ["30"]);
+    try {
+      if (child.pid === undefined) return;
+      writeServicePid(home, child.pid);
+      const client = { health: vi.fn(async () => true) } as unknown as ServiceClient;
+      const result = await stopService(client, { home, port: 8797 });
+      expect(result.stopped).toBe(false);
+      if (result.stopped === false) expect(result.reason).toBe("not-service");
+      expect(isProcessAlive(child.pid)).toBe(true);
+      // The stale pid file is dropped either way.
+      expect(readServicePid(home)).toBeNull();
+    } finally {
+      child.kill("SIGKILL");
       rmSync(home, { recursive: true, force: true });
     }
   });

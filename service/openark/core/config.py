@@ -1,10 +1,13 @@
 import json
+import logging
 import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class InheritRoute(BaseModel):
@@ -46,16 +49,27 @@ def _load_settings() -> Settings:
     if config_path.exists():
         try:
             raw = json.loads(config_path.read_text())
-            if isinstance(raw, dict):
-                if "servicePort" in raw:
-                    overrides["service_port"] = int(raw["servicePort"])
-                if isinstance(raw.get("models"), dict):
-                    overrides["models"] = raw["models"]
-        except (ValueError, OSError):
-            pass
+        except (ValueError, OSError) as err:
+            logger.warning("ignoring unreadable %s: %s", config_path, err)
+            return Settings(root=root)
+        if not isinstance(raw, dict):
+            logger.warning("ignoring %s: top-level JSON must be an object", config_path)
+            return Settings(root=root)
+        port = raw.get("servicePort")
+        if port is not None:
+            # bool is an int subclass — exclude it explicitly, and validate
+            # the range, so a typo can't bind port 1 or crash startup with
+            # an uncaught TypeError from int(None)/int({}).
+            if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+                logger.warning("ignoring invalid servicePort %r in %s", port, config_path)
+            else:
+                overrides["service_port"] = port
+        if isinstance(raw.get("models"), dict):
+            overrides["models"] = raw["models"]
     try:
         return Settings(root=root, **overrides)
-    except ValueError:
+    except ValueError as err:
+        logger.warning("ignoring invalid model routing in %s: %s", config_path, err)
         return Settings(root=root)
 
 

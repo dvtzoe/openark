@@ -8,8 +8,6 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic import ValidationError
-
 from ..core.models import AgentManifest
 
 logger = logging.getLogger(__name__)
@@ -138,16 +136,26 @@ class AgentRegistry:
                 continue
             try:
                 manifests.append(self.get(entry.name))
-            except (json.JSONDecodeError, ValidationError) as err:
+            except AgentNotFound as err:
                 logger.warning("skipping agent %r: corrupted agent.json (%s)", entry.name, err)
         return manifests
 
     def get(self, name: str) -> AgentManifest:
-        path = self.agent_home(name) / "agent.json"
+        # Parse/IO failures surface as AgentNotFound (404) instead of an
+        # unhandled 500: a hand-edited or partially-written agent.json makes
+        # one agent unusable, not the whole service. The reason is logged.
+        try:
+            path = self.agent_home(name) / "agent.json"
+        except ValueError as err:
+            raise AgentNotFound(name) from err
         if not path.exists():
             raise AgentNotFound(name)
-        raw = json.loads(path.read_text())
-        return AgentManifest.model_validate(raw)
+        try:
+            raw = json.loads(path.read_text())
+            return AgentManifest.model_validate(raw)
+        except (ValueError, OSError) as err:
+            logger.warning("agent %r has an unreadable agent.json: %s", name, err)
+            raise AgentNotFound(name) from err
 
     def save_manifest(self, manifest: AgentManifest) -> None:
         path = self.agent_home(manifest.name) / "agent.json"
@@ -175,27 +183,43 @@ class AgentRegistry:
             raise AgentAlreadyExists(name)
         if persona is not None and persona not in self.bundled_personas():
             raise UnknownPersona(persona)
+        source = BUNDLED_PERSONAS / persona if persona else None
+        if source is not None:
+            # Validate the whole bundled persona before creating anything —
+            # a half-created agent home is listed but 500s on persona reads.
+            missing = [
+                base for base in self.PERSONA_BASES if not (source / base).is_file()
+            ]
+            if missing:
+                raise ValueError(f"bundled persona {persona!r} is missing: {', '.join(missing)}")
         manifest = AgentManifest(
             name=name,
             description=description,
             modules=dict(DEFAULT_MODULES),
         )
-        for sub in ("skills", "data", "logs"):
-            (home / sub).mkdir(parents=True)
-        _atomic_write_text(home / "agent.json", json.dumps(manifest.model_dump(), indent=2) + "\n")
-        if persona:
-            source = BUNDLED_PERSONAS / persona
-            (home / "persona.core.md").write_text((source / "persona.core.md").read_text())
-            (home / "persona.evolving.md").write_text((source / "persona.evolving.md").read_text())
-            for base in self.PERSONA_BASES:
-                dropin = source / f"{base}.d"
-                if dropin.is_dir():
-                    shutil.copytree(dropin, home / f"{base}.d", dirs_exist_ok=True)
-        else:
-            (home / "persona.core.md").write_text(CORE_TEMPLATE)
-            (home / "persona.evolving.md").write_text(EVOLVING_TEMPLATE)
-        (home / "lessons.md").write_text(LESSONS_TEMPLATE)
-        (home / "logs" / "audit.log").write_text("")
+        try:
+            for sub in ("skills", "data", "logs"):
+                (home / sub).mkdir(parents=True)
+            _atomic_write_text(
+                home / "agent.json", json.dumps(manifest.model_dump(), indent=2) + "\n"
+            )
+            if source is not None:
+                (home / "persona.core.md").write_text((source / "persona.core.md").read_text())
+                (home / "persona.evolving.md").write_text(
+                    (source / "persona.evolving.md").read_text()
+                )
+                for base in self.PERSONA_BASES:
+                    dropin = source / f"{base}.d"
+                    if dropin.is_dir():
+                        shutil.copytree(dropin, home / f"{base}.d", dirs_exist_ok=True)
+            else:
+                (home / "persona.core.md").write_text(CORE_TEMPLATE)
+                (home / "persona.evolving.md").write_text(EVOLVING_TEMPLATE)
+            (home / "lessons.md").write_text(LESSONS_TEMPLATE)
+            (home / "logs" / "audit.log").write_text("")
+        except BaseException:
+            shutil.rmtree(home, ignore_errors=True)
+            raise
         self.audit(name, "agent.create", f"persona={persona or 'default'} {description}".strip())
         return manifest
 
@@ -265,9 +289,19 @@ class AgentRegistry:
         _atomic_write_text(resolved, content)
 
     def audit(self, agent: str, action: str, detail: str = "") -> None:
-        home = self.agent_home(agent)
+        try:
+            home = self.agent_home(agent)
+        except ValueError:
+            return
+        if not home.exists():
+            return
         entry = f"{datetime.now(UTC).isoformat()} {agent} {action} {detail}".strip()
         log = home / "logs" / "audit.log"
-        if log.exists():
+        try:
+            log.parent.mkdir(parents=True, exist_ok=True)
             with log.open("a") as fh:
                 fh.write(entry + "\n")
+        except OSError as err:
+            # Audit writes must never take an operation down, but losing
+            # them silently would break the "audit everything" contract.
+            logger.warning("audit write failed for %s: %s", agent, err)

@@ -67,7 +67,6 @@ def render(spec: PromptSpec, **values: str) -> str:
     missing = placeholders - set(values)
     if missing:
         raise PromptFormatError(f"prompt {spec.name}: missing placeholders {sorted(missing)}")
-    rendered = spec.body
-    for key, value in values.items():
-        rendered = rendered.replace("{" + key + "}", value)
-    return rendered
+    # Single pass: replacing sequentially would let a value that itself
+    # contains "{other}" be rewritten by the next placeholder's replacement.
+    return re.sub(r"\{(\w+)\}", lambda match: values[match.group(1)], spec.body)

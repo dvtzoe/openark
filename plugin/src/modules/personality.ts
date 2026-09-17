@@ -6,8 +6,9 @@ import type { components } from "../generated/api-types.js";
 type PersonaResponse = components["schemas"]["PersonaResponse"];
 type PersonaEvolveResponse = components["schemas"]["PersonaEvolveResponse"];
 
+const personaEvolveShape = { signals: filteredStringArray() };
 const personaEvolveArgs = z
-  .object({ signals: filteredStringArray() })
+  .object(personaEvolveShape)
   .refine((v) => v.signals.length > 0, "signals is required (non-empty string array)");
 
 export const personalityModule: OpenArkModule = {
@@ -47,6 +48,7 @@ export const personalityModule: OpenArkModule = {
         description:
           "Propose updates to your learned preferences from distinct user feedback signals. " +
           "Pass each distinct signal (a separate instance of feedback) as an item in the signals array.",
+        argsSchema: personaEvolveShape,
         execute: async (args) => {
           const { signals } = personaEvolveArgs.parse(args);
           return ctx.service.postJSON<PersonaEvolveResponse>(

@@ -1,6 +1,6 @@
-import type { Part } from "@opencode-ai/sdk";
 import { describe, expect, it, vi } from "vitest";
-import { buildHooks, toolFailure, userText } from "../src/core/hooks";
+import type { PluginContext, SessionEvent } from "../src/core/hooks";
+import { handleSessionEvent, registerHooks } from "../src/core/hooks";
 import type { Runtime } from "../src/core/runtime";
 
 function fakeRuntime(): Runtime & {
@@ -47,154 +47,204 @@ function fakeRuntime(): Runtime & {
   } as unknown as ReturnType<typeof fakeRuntime>;
 }
 
-function textPart(text: string): Part {
-  return { type: "text", text } as Part;
+type HookCallback = (event: unknown) => Promise<void> | void;
+
+function fakeContext(
+  options: {
+    sessionInfo?: { agent?: string; model?: { providerID: string; id: string } };
+    events?: SessionEvent[];
+  } = {},
+): {
+  ctx: PluginContext;
+  hookCallbacks: Map<string, HookCallback>;
+  toolCallbacks: Map<string, HookCallback>;
+  signal: () => AbortSignal | undefined;
+} {
+  const hookCallbacks = new Map<string, HookCallback>();
+  const toolCallbacks = new Map<string, HookCallback>();
+  let signal: AbortSignal | undefined;
+  const sessionInfo = options.sessionInfo ?? {
+    agent: "defoko",
+    model: { providerID: "anthropic", id: "claude-sonnet" },
+  };
+
+  const ctx = {
+    location: { directory: "/work" },
+    session: {
+      get: vi.fn(async () => sessionInfo),
+      hook: vi.fn(async (name: string, callback: HookCallback) => {
+        hookCallbacks.set(name, callback);
+        return { dispose: async () => {} };
+      }),
+    },
+    tool: {
+      hook: vi.fn(async (name: string, callback: HookCallback) => {
+        toolCallbacks.set(name, callback);
+        return { dispose: async () => {} };
+      }),
+    },
+    event: {
+      subscribe: vi.fn((opts?: { signal?: AbortSignal }) => {
+        signal = opts?.signal;
+        return (async function* () {
+          for (const event of options.events ?? []) yield event;
+          await new Promise<void>((resolve) => {
+            const current = opts?.signal;
+            if (current?.aborted) return resolve();
+            current?.addEventListener("abort", () => resolve(), { once: true });
+          });
+        })();
+      }),
+    },
+  };
+
+  return {
+    ctx: ctx as unknown as PluginContext,
+    hookCallbacks,
+    toolCallbacks,
+    signal: () => signal,
+  };
 }
 
-function toolPart(state: Record<string, unknown>, sessionID = "s1"): Part {
-  return { type: "tool", tool: "bash", sessionID, state } as unknown as Part;
-}
-
-describe("userText", () => {
-  it("joins text parts and trims", () => {
-    expect(userText([textPart(" hello "), textPart("world")])).toBe("hello \nworld");
-  });
-
-  it("ignores non-text parts", () => {
-    expect(userText([toolPart({ status: "pending" }) as Part, textPart("hi")])).toBe("hi");
-  });
+const promptEvent = (sessionID: string, text: string) => ({ sessionID, prompt: { text } });
+const contextEvent = (sessionID: string, system: unknown[] = []) => ({
+  sessionID,
+  agent: "defoko",
+  model: { providerID: "anthropic", id: "claude-sonnet" },
+  system,
 });
 
-describe("toolFailure", () => {
-  it("extracts errors from tool parts", () => {
-    const failure = toolFailure(toolPart({ status: "error", error: "exit 1" }, "s1"));
-    expect(failure).toEqual({
-      tool: "bash",
-      ok: false,
-      durationMs: 0,
-      summary: "exit 1",
-      sessionID: "s1",
-    });
-  });
-
-  it("computes duration for completed tools", () => {
-    const failure = toolFailure(
-      toolPart({ status: "completed", output: "done", time: { start: 1000, end: 1500 } }, "s1"),
-    );
-    expect(failure).toEqual({
-      tool: "bash",
-      ok: true,
-      durationMs: 500,
-      summary: "done",
-      sessionID: "s1",
-    });
-  });
-
-  it("ignores running and pending tools", () => {
-    expect(toolFailure(toolPart({ status: "running" }))).toBeNull();
-    expect(toolFailure(toolPart({ status: "pending" }))).toBeNull();
-  });
-
-  it("ignores non-tool parts", () => {
-    expect(toolFailure(textPart("hi"))).toBeNull();
-  });
-});
-
-describe("buildHooks", () => {
-  it("routes user messages through chat.message, noting the session's agent first", async () => {
+describe("handleSessionEvent", () => {
+  it("flushes only the idle session", async () => {
     const runtime = fakeRuntime();
-    const hooks = buildHooks(runtime);
-    await hooks["chat.message"]?.(
-      { sessionID: "s1", agent: "defoko" },
-      {
-        message: { role: "user", agent: "defoko" },
-        parts: [textPart("hello")],
-      },
-    );
+    await handleSessionEvent(runtime, { type: "session.idle", data: { sessionID: "s1" } });
+    expect(runtime.ends).toEqual(["s1"]);
+  });
+
+  it("forgets a deleted session", async () => {
+    const runtime = fakeRuntime();
+    await handleSessionEvent(runtime, { type: "session.deleted", data: { sessionID: "s1" } });
+    expect(runtime.forgottenSessions).toEqual(["s1"]);
+  });
+
+  it("ignores other events and events without a session", async () => {
+    const runtime = fakeRuntime();
+    await handleSessionEvent(runtime, { type: "message.updated", data: { sessionID: "s1" } });
+    await handleSessionEvent(runtime, { type: "session.idle", data: {} });
+    expect(runtime.ends).toEqual([]);
+  });
+});
+
+describe("registerHooks", () => {
+  it("notes the session and forwards the prompt text", async () => {
+    const runtime = fakeRuntime();
+    const { ctx, hookCallbacks } = fakeContext();
+    await registerHooks(ctx, runtime, () => {});
+    await hookCallbacks.get("prompt")?.(promptEvent("s1", " hello "));
     expect(runtime.notedSessions).toEqual([["s1", "defoko"]]);
     expect(runtime.userMessages).toEqual(["hello"]);
   });
 
-  it("ignores assistant messages", async () => {
+  it("falls back to the current agent when the session has none", async () => {
     const runtime = fakeRuntime();
-    const hooks = buildHooks(runtime);
-    await hooks["chat.message"]?.(
-      { sessionID: "s1" },
-      { message: { role: "assistant" }, parts: [textPart("hi")] },
-    );
+    const { ctx, hookCallbacks } = fakeContext({ sessionInfo: { model: undefined } });
+    await registerHooks(ctx, runtime, () => {});
+    await hookCallbacks.get("prompt")?.(promptEvent("s1", "hi"));
+    expect(runtime.notedSessions).toEqual([["s1", "defoko"]]);
+  });
+
+  it("skips empty prompt text", async () => {
+    const runtime = fakeRuntime();
+    const { ctx, hookCallbacks } = fakeContext();
+    await registerHooks(ctx, runtime, () => {});
+    await hookCallbacks.get("prompt")?.(promptEvent("s1", "   "));
     expect(runtime.userMessages).toEqual([]);
+  });
+
+  it("survives a prompt-handling failure", async () => {
+    const runtime = fakeRuntime();
+    const { ctx, hookCallbacks } = fakeContext();
+    (ctx.session.get as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("boom"));
+    const log = vi.fn();
+    await registerHooks(ctx, runtime, log);
+    await hookCallbacks.get("prompt")?.(promptEvent("s1", "hi"));
+    expect(log).toHaveBeenCalledWith("warn", expect.stringContaining("prompt handling failed"));
   });
 
   it("injects into the system prompt", async () => {
     const runtime = fakeRuntime();
-    const hooks = buildHooks(runtime);
-    const output = { system: ["base"] };
-    await hooks["experimental.chat.system.transform"]?.({ sessionID: "s1" }, output);
-    expect(output.system[1]).toContain("# openark");
-    expect(output.system[1]).toContain("## Persona");
+    const { ctx, hookCallbacks } = fakeContext();
+    await registerHooks(ctx, runtime, () => {});
+    const system: unknown[] = ["base"];
+    await hookCallbacks.get("context")?.(contextEvent("s1", system));
+    expect(system[0]).toBe("base");
+    expect(system[1]).toMatchObject({ type: "text" });
+    expect(JSON.stringify(system[1])).toContain("# openark");
+    expect(JSON.stringify(system[1])).toContain("## Persona");
   });
 
   it("does not inject when empty", async () => {
     const runtime = fakeRuntime();
     runtime.injectionsText = "";
-    const hooks = buildHooks(runtime);
-    const output = { system: [] };
-    await hooks["experimental.chat.system.transform"]?.({ sessionID: "s1" }, output);
-    expect(output.system).toEqual([]);
+    const { ctx, hookCallbacks } = fakeContext();
+    await registerHooks(ctx, runtime, () => {});
+    const system: unknown[] = [];
+    await hookCallbacks.get("context")?.(contextEvent("s1", system));
+    expect(system).toEqual([]);
   });
 
-  it("feeds tool errors to the runtime", async () => {
+  it("feeds failed tool calls to the runtime", async () => {
     const runtime = fakeRuntime();
-    const hooks = buildHooks(runtime);
-    await hooks.event?.({
-      event: {
-        type: "message.part.updated",
-        properties: { part: toolPart({ status: "error", error: "exit 2" }, "s1") },
-      },
+    const { ctx, toolCallbacks } = fakeContext();
+    await registerHooks(ctx, runtime, () => {});
+    await toolCallbacks.get("execute.before")?.({ id: "call1" });
+    await toolCallbacks.get("execute.after")?.({
+      id: "call1",
+      tool: "bash",
+      sessionID: "s1",
+      status: "error",
+      error: { message: "exit 2" },
     });
     expect(runtime.toolResults).toEqual([
-      { tool: "bash", ok: false, durationMs: 0, summary: "exit 2", sessionID: "s1" },
+      { tool: "bash", ok: false, durationMs: expect.any(Number), summary: "exit 2" },
     ]);
   });
 
   it("ignores successful tool completions", async () => {
     const runtime = fakeRuntime();
-    const hooks = buildHooks(runtime);
-    await hooks.event?.({
-      event: {
-        type: "message.part.updated",
-        properties: { part: toolPart({ status: "completed", output: "ok" }) },
-      },
+    const { ctx, toolCallbacks } = fakeContext();
+    await registerHooks(ctx, runtime, () => {});
+    await toolCallbacks.get("execute.after")?.({
+      id: "call1",
+      tool: "bash",
+      sessionID: "s1",
+      status: "completed",
+      result: {},
     });
     expect(runtime.toolResults).toEqual([]);
   });
 
-  it("flushes only the idle session on session.idle", async () => {
+  it("pumps session lifecycle events from the subscription", async () => {
     const runtime = fakeRuntime();
-    const hooks = buildHooks(runtime);
-    await hooks.event?.({ event: { type: "session.idle", properties: { sessionID: "s1" } } });
-    expect(runtime.ends).toEqual(["s1"]);
-  });
-
-  it("forgets a session on session.deleted", async () => {
-    const runtime = fakeRuntime();
-    const hooks = buildHooks(runtime);
-    await hooks.event?.({
-      event: { type: "session.deleted", properties: { info: { id: "s1" } } },
+    const { ctx } = fakeContext({
+      events: [
+        { type: "session.idle", data: { sessionID: "s1" } },
+        { type: "session.deleted", data: { sessionID: "s2" } },
+      ],
     });
-    expect(runtime.forgottenSessions).toEqual(["s1"]);
+    const hooks = await registerHooks(ctx, runtime, () => {});
+    await vi.waitFor(() => expect(runtime.ends).toEqual(["s1"]));
+    await vi.waitFor(() => expect(runtime.forgottenSessions).toEqual(["s2"]));
+    await hooks.stop();
   });
 
-  it("flushes every session on dispose", async () => {
+  it("flushes every session and aborts the subscription on stop", async () => {
     const runtime = fakeRuntime();
-    const hooks = buildHooks(runtime);
-    await hooks.dispose?.();
+    const { ctx, signal } = fakeContext();
+    const hooks = await registerHooks(ctx, runtime, () => {});
+    expect(signal()?.aborted).toBe(false);
+    await hooks.stop();
+    expect(signal()?.aborted).toBe(true);
     expect(runtime.ends).toEqual(["(all)"]);
-  });
-
-  it("registers tools when provided", () => {
-    const runtime = fakeRuntime();
-    const hooks = buildHooks(runtime, { memory_search: {} });
-    expect(Object.keys(hooks.tool ?? {})).toEqual(["memory_search"]);
   });
 });

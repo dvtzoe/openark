@@ -21,4 +21,5 @@ Rules:
   preference on the next line.
 - Only include preferences supported by at least {threshold} distinct signals.
 - Never rewrite the core persona; only these learned preferences.
-- Output nothing if no change clears the threshold.
+- Output nothing, or exactly NONE, if no change clears the threshold. Do not
+  add explanations, headings, or summaries.

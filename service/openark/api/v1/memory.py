@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from ...core.models import (
     MemoryCreateRequest,
@@ -12,6 +12,7 @@ from ...core.registry import AgentRegistry
 from ...modules.channels import ChannelsStore
 from ...modules.memory import MemoryModule
 from .agents import get_registry, require_agent
+from .deps import preferred_model
 
 router = APIRouter(tags=["memory"])
 
@@ -36,14 +37,15 @@ def _require_module(module: MemoryModule, registry: AgentRegistry) -> MemoryModu
 def recall(
     name: str,
     q: str = "",
-    limit: int = 10,
+    limit: int = Query(10, ge=1, le=100),
     registry: AgentRegistry = Depends(get_registry),
     module=Depends(get_memory_module),
     channels=Depends(get_channels_store),
+    preferred: str | None = Depends(preferred_model),
 ):
     agent_home = require_agent(registry, name)
     module = _require_module(module, registry)
-    memories = module.recall(agent_home, name, q=q, limit=limit)
+    memories = module.recall(agent_home, name, q=q, limit=limit, preferred=preferred)
     remaining = limit - len(memories)
     if remaining > 0:
         for item in channels.subscribed_items(registry, name, q=q, limit=remaining):
@@ -64,10 +66,13 @@ def add_memory(
     request: MemoryCreateRequest,
     registry: AgentRegistry = Depends(get_registry),
     module=Depends(get_memory_module),
+    preferred: str | None = Depends(preferred_model),
 ):
     agent_home = require_agent(registry, name)
     module = _require_module(module, registry)
-    result = module.add(agent_home, name, request.text, project=request.project)
+    result = module.add(
+        agent_home, name, request.text, project=request.project, preferred=preferred
+    )
     if result is None:
         raise HTTPException(status_code=502, detail="memory write failed")
     return result
@@ -79,7 +84,10 @@ def ingest(
     request: MemoryIngestRequest,
     registry: AgentRegistry = Depends(get_registry),
     module=Depends(get_memory_module),
+    preferred: str | None = Depends(preferred_model),
 ):
     agent_home = require_agent(registry, name)
     module = _require_module(module, registry)
-    return module.ingest(agent_home, name, request.text, project=request.project)
+    return module.ingest(
+        agent_home, name, request.text, project=request.project, preferred=preferred
+    )

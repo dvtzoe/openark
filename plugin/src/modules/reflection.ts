@@ -15,13 +15,15 @@ type ReflectResponse = components["schemas"]["ReflectResponse"];
 type LessonRetireResponse = components["schemas"]["LessonRetireResponse"];
 type Lesson = components["schemas"]["Lesson"];
 
+const reflectShape = { failures: filteredStringArray(), messages: filteredStringArray() };
 const reflectArgs = z
-  .object({ failures: filteredStringArray(), messages: filteredStringArray() })
+  .object(reflectShape)
   .refine(
     (v) => v.failures.length > 0 || v.messages.length > 0,
     "failures or messages is required",
   );
-const lessonsRetireArgs = z.object({ id: requiredString("id is required") });
+const lessonsRetireShape = { id: requiredString("id is required") };
+const lessonsListShape = { all: z.boolean().optional() };
 
 const MAX_BUFFERED = 100;
 
@@ -61,8 +63,17 @@ function registerHits(ctx: ModuleContext, lessons: Lesson[]): void {
     .catch(() => undefined);
 }
 
+// Sessions that failed at least once; cleared once a following user message
+// (the correction) has been captured and flushed.
+const pendingFailure = new Set<string>();
+
+function sessionKey(ctx: ModuleContext): string {
+  return ctx.session?.id ?? "";
+}
+
 export function resetBuffers(): void {
   buffers.clear();
+  pendingFailure.clear();
   countedSessions = new Set();
 }
 
@@ -78,24 +89,31 @@ export const reflectionModule: OpenArkModule = {
 
   async onUserMessage(ctx, message) {
     const text = message.text.trim();
+    if (!text) return;
+    const key = sessionKey(ctx);
     const buf = bufferFor(ctx);
-    if (!text || buf.failures.length === 0) return;
+    // Capture only if something failed this session (before or after the
+    // idle flush) — plain chatter still doesn't trigger reflection.
+    if (!pendingFailure.has(key) && buf.failures.length === 0) return;
     pushBounded(buf.messages, text, MAX_BUFFERED);
   },
 
   async onToolResult(ctx, result) {
     if (result.ok) return;
-    const buf = bufferFor(ctx);
-    pushBounded(buf.failures, result, MAX_BUFFERED);
+    pendingFailure.add(sessionKey(ctx));
+    pushBounded(bufferFor(ctx).failures, result, MAX_BUFFERED);
   },
 
   async onSessionEnd(ctx) {
-    const key = ctx.session?.id ?? "";
+    const key = sessionKey(ctx);
     const buf = buffers.get(key);
     if (!buf || (!buf.failures.length && !buf.messages.length)) return;
     const failures = buf.failures.splice(0, buf.failures.length);
     const messages = buf.messages.splice(0, buf.messages.length);
     buffers.delete(key);
+    // If the correction came along with this flush we're done; if only the
+    // failure was flushed, the next user message is still the correction.
+    if (messages.length) pendingFailure.delete(key);
     await ctx.service
       .postJSON<ReflectResponse>(`/v1/agents/${ctx.agent}/lessons/reflect`, {
         failures: failures.map((f) => ({
@@ -107,6 +125,12 @@ export const reflectionModule: OpenArkModule = {
         messages,
       })
       .catch(() => undefined);
+  },
+
+  onSessionDeleted(ctx) {
+    const key = sessionKey(ctx);
+    buffers.delete(key);
+    pendingFailure.delete(key);
   },
 
   async injections(ctx: ModuleContext): Promise<InjectionBlock[]> {
@@ -131,6 +155,7 @@ export const reflectionModule: OpenArkModule = {
         description:
           "Reflect on failures and extract durable lessons. Pass each failure as a " +
           "short description in the failures array; optionally pass user correction messages.",
+        argsSchema: reflectShape,
         execute: async (args) => {
           const { failures, messages } = reflectArgs.parse(args);
           return ctx.service.postJSON<ReflectResponse>(`/v1/agents/${ctx.agent}/lessons/reflect`, {
@@ -147,6 +172,7 @@ export const reflectionModule: OpenArkModule = {
       {
         name: "lessons_list",
         description: "List this agent's learned lessons (active by default)",
+        argsSchema: lessonsListShape,
         execute: async (args) => {
           const includeRetired = args.all === true;
           return ctx.service.getJSON<LessonsResponse>(
@@ -157,8 +183,9 @@ export const reflectionModule: OpenArkModule = {
       {
         name: "lessons_retire",
         description: "Retire a learned lesson by id so it is no longer injected",
+        argsSchema: lessonsRetireShape,
         execute: async (args) => {
-          const { id } = lessonsRetireArgs.parse(args);
+          const { id } = z.object(lessonsRetireShape).parse(args);
           return ctx.service.postJSON<LessonRetireResponse>(
             `/v1/agents/${ctx.agent}/lessons/${id}/retire`,
             {},

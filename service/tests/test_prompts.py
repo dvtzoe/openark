@@ -62,6 +62,11 @@ def test_render_fills_placeholders():
     assert render(spec, who="a", what="b") == "Hello a, b?"
 
 
+def test_render_does_not_substitute_placeholders_inside_values():
+    spec = parse_prompt("---\nname: x\nversion: 1\ntask: t\n---\n{a} and {b}")
+    assert render(spec, a="{b}", b="B") == "{b} and B"
+
+
 def test_render_missing_placeholder():
     spec = parse_prompt("---\nname: x\nversion: 1\ntask: t\n---\nHello {who}")
     with pytest.raises(PromptFormatError, match="who"):

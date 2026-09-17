@@ -91,3 +91,18 @@ def test_subscribed_items_respects_limit(registry, store):
     store.push(registry, "defoko", "team", "two")
     store.push(registry, "defoko", "team", "three")
     assert len(store.subscribed_items(registry, "observer", limit=2)) == 2
+
+
+def test_push_rejects_unknown_kind(registry, store):
+    with pytest.raises(ValueError):
+        store.push(registry, "defoko", "team", "text", kind="note")
+
+
+def test_scalar_json_lines_are_ignored(registry, store):
+    store.subscribe(registry, "observer", "team")
+    store.push(registry, "defoko", "team", "good item")
+    path = store._items_path("team")
+    with path.open("a") as fh:
+        fh.write("null\n5\n\"just a string\"\n")
+    assert [i["text"] for i in store.list_channel("team")] == ["good item"]
+    assert [i["text"] for i in store.subscribed_items(registry, "observer")] == ["good item"]

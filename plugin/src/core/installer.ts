@@ -61,7 +61,7 @@ export function installPluginShim(configDir: string): string {
   writeFileSync(
     shim,
     `// ${MANAGED_NOTE} Loads the openark plugin from its installed package.\n` +
-      `export { plugin, default } from "${url}"\n`,
+      `export { default } from "${url}"\n`,
   );
   return shim;
 }
@@ -102,11 +102,21 @@ export function isManagedFile(path: string): boolean {
 export function generateAgentFiles(configDir: string, home: string = openarkHome()): string[] {
   const agentsDir = join(configDir, "agents");
   mkdirSync(agentsDir, { recursive: true });
+  const agents = new Set(listAgents(home));
   const written: string[] = [];
-  for (const name of listAgents(home)) {
+  for (const name of agents) {
     const path = join(agentsDir, `${name}.md`);
     writeFileSync(path, renderAgentFile(name, readAgentDescription(name, home), home));
     written.push(path);
+  }
+  // Prune generated files for agents that no longer exist, or opencode
+  // keeps listing a deleted agent forever. Only openark-managed files.
+  for (const entry of readdirSync(agentsDir)) {
+    if (!entry.endsWith(".md")) continue;
+    const name = entry.slice(0, -3);
+    if (agents.has(name)) continue;
+    const path = join(agentsDir, entry);
+    if (isManagedFile(path)) rmSync(path, { force: true });
   }
   return written;
 }
@@ -142,11 +152,21 @@ export function linkSkills(configDir: string, home: string = openarkHome()): str
 export function isOpenarkLink(linkPath: string, home: string): boolean {
   try {
     if (!lstatSync(linkPath).isSymbolicLink()) return false;
+    // Trailing separators on OPENARK_HOME would break the prefix compare
+    // and make openark-owned links look foreign (never pruned/repaired).
+    const base = home.replace(/[\\/]+$/, "");
     const target = readlinkSync(linkPath);
-    return target === home || target.startsWith(home + sep);
+    return target === base || target.startsWith(base + sep);
   } catch {
     return false;
   }
+}
+
+// Bundled commands are installed copies; the marker makes them
+// distinguishable from a user's own file with the same (generic) name.
+function managedCommandContent(content: string): string {
+  if (content.includes(MANAGED_NOTE)) return content;
+  return `${content.replace(/\n*$/, "\n")}\n<!-- ${MANAGED_NOTE} -->\n`;
 }
 
 export function installCommands(
@@ -161,7 +181,8 @@ export function installCommands(
     if (!entry.endsWith(".md")) continue;
     const source = join(commandsDir, entry);
     const target = join(targetDir, entry);
-    writeFileSync(target, readFileSync(source, "utf8"));
+    if (existsSync(target) && !isManagedFile(target)) continue; // user's file wins
+    writeFileSync(target, managedCommandContent(readFileSync(source, "utf8")));
     copied.push(target);
   }
   return copied;
@@ -213,10 +234,7 @@ export function uninstallCommands(
   for (const entry of readdirSync(commandsDir)) {
     if (!entry.endsWith(".md")) continue;
     const target = join(targetDir, entry);
-    if (existsSync(target)) {
-      rmSync(target, { force: true });
-      removed.push(target);
-    }
+    if (removeIfManaged(target)) removed.push(target);
   }
   return removed;
 }

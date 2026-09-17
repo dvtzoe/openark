@@ -30,8 +30,8 @@ def memory_dependencies_installed() -> bool:
 
 class MemoryStore(Protocol):
     def add(
-        self, agent: str, text: str | list[str], metadata: dict[str, Any], infer: bool
-    ) -> dict[str, Any] | None: ...
+        self, agent: str, text: str | list[dict[str, str]], metadata: dict[str, Any], infer: bool
+    ) -> list[dict[str, Any]]: ...
 
     def search(self, agent: str, query: str, limit: int) -> list[dict[str, Any]]: ...
 
@@ -62,9 +62,7 @@ class Mem0Store:
     def add(self, agent, text, metadata, infer):
         result = self._memory.add(text, user_id=agent, infer=infer, metadata=metadata)
         results = result.get("results") if isinstance(result, dict) else None
-        if not results:
-            return None
-        return results[0]
+        return results if isinstance(results, list) else []
 
     def search(self, agent, query, limit):
         result = self._memory.search(query, filters={"user_id": agent}, top_k=limit)
@@ -85,7 +83,7 @@ class Mem0StoreFactory:
     def __init__(self):
         self._stores: dict[Path, Mem0Store] = {}
 
-    def __call__(self, agent_home: Path) -> Mem0Store:
+    def __call__(self, agent_home: Path, preferred: str | None = None) -> Mem0Store:
         store = self._stores.get(agent_home)
         if store is None:
             # Built once per agent with whatever LLM/embedder route
@@ -94,18 +92,24 @@ class Mem0StoreFactory:
             # be wasteful. Tradeoff: changing openark.json's model routing
             # for extraction/embeddings after an agent's memory has
             # already been used has no effect until the service restarts.
-            store = Mem0Store(agent_home / "data", self._llm_config(), self._embedder_config())
+            store = Mem0Store(
+                agent_home / "data", self._llm_config(preferred), self._embedder_config()
+            )
             self._stores[agent_home] = store
         return store
 
-    def _llm_config(self) -> dict[str, Any] | None:
+    def _llm_config(self, preferred: str | None = None) -> dict[str, Any] | None:
         try:
-            route = resolve_route("extraction")
+            route = resolve_route("extraction", preferred=preferred)
         except Exception:
             return None
         return route.mem0_llm_config() if route else None
 
     def _embedder_config(self) -> dict[str, Any]:
+        # Deliberately ignores the selected chat model: embeddings need an
+        # embedding model, and sending them to a chat-only gateway would
+        # 400 every memory write. Dedicated routes come from openark.json's
+        # `models.embeddings`; otherwise the local fastembed default is used.
         try:
             route = resolve_route("embeddings")
         except Exception:
@@ -115,7 +119,7 @@ class Mem0StoreFactory:
                 "provider": "openai",
                 "config": {
                     "model": route.model,
-                    "api_key": route.api_key,
+                    "api_key": route.api_key or "unused",
                     "openai_base_url": route.base_url,
                 },
             }
@@ -127,7 +131,7 @@ class MemoryModule:
 
     def __init__(
         self,
-        store_factory: Callable[[Path], MemoryStore] | None = None,
+        store_factory: Callable[..., MemoryStore] | None = None,
         runner: TaskRunner | None = None,
         prompts_dir: Path | None = None,
     ):
@@ -139,11 +143,28 @@ class MemoryModule:
     def ready(self, registry: AgentRegistry) -> bool:
         return memory_dependencies_installed()
 
-    def _store(self, agent_home: Path) -> MemoryStore:
-        return self._store_factory(agent_home)
+    def _store(self, agent_home: Path, preferred: str | None = None) -> MemoryStore:
+        if preferred is None:
+            return self._store_factory(agent_home)
+        return self._store_factory(agent_home, preferred)
 
-    def _llm_available(self) -> bool:
-        return self._runner is not None and self._runner.available("extraction")
+    def _llm_available(self, preferred: str | None = None) -> bool:
+        return self._runner is not None and self._runner.available("extraction", preferred)
+
+    def _infer_available(self, preferred: str | None = None) -> bool:
+        """Whether mem0 may run its own extraction/consolidation call.
+
+        mem0 builds its own OpenAI client from the route, and that client
+        cannot send the x-opencode-session header opencode's gateways
+        require — so mem0-side inference is only safe for direct providers.
+        """
+        if self._runner is None:
+            return False
+        try:
+            route = self._runner.route("extraction", preferred)
+        except Exception:
+            return False
+        return route is not None and route.session_id is None
 
     def _extraction(self) -> PromptSpec:
         if self._extraction_prompt is None:
@@ -151,9 +172,14 @@ class MemoryModule:
         return self._extraction_prompt
 
     def recall(
-        self, agent_home: Path, agent: str, q: str = "", limit: int = 10
+        self,
+        agent_home: Path,
+        agent: str,
+        q: str = "",
+        limit: int = 10,
+        preferred: str | None = None,
     ) -> list[MemoryItem]:
-        store = self._store(agent_home)
+        store = self._store(agent_home, preferred)
         try:
             if q.strip():
                 pool = store.search(agent, q.strip(), limit=limit * 3)
@@ -173,15 +199,20 @@ class MemoryModule:
         ]
 
     def add(
-        self, agent_home: Path, agent: str, text: str, project: str | None = None
+        self,
+        agent_home: Path,
+        agent: str,
+        text: str,
+        project: str | None = None,
+        preferred: str | None = None,
     ) -> MemoryMutation | None:
-        store = self._store(agent_home)
+        store = self._store(agent_home, preferred)
         metadata = {"source": "manual"}
         if project:
             metadata["project"] = project
-        infer = self._llm_available()
+        infer = self._infer_available(preferred)
         try:
-            result = store.add(agent, text, metadata, infer=infer)
+            results = store.add(agent, text, metadata, infer=infer)
         except Exception as err:
             # Same degrade-to-no-op contract as ingest()'s store.add() call
             # below: api/v1/memory.py's add_memory already treats a None
@@ -189,20 +220,28 @@ class MemoryModule:
             # without needing a new error shape.
             logger.warning("memory add write failed for %s: %s", agent, err)
             return None
-        if result is None:
+        if not results:
             return None
-        return MemoryMutation(id=str(result.get("id", "")), event=str(result.get("event", "ADD")))
+        first = results[0]
+        return MemoryMutation(id=str(first.get("id", "")), event=str(first.get("event", "ADD")))
 
     def ingest(
-        self, agent_home: Path, agent: str, conversation: str, project: str | None = None
+        self,
+        agent_home: Path,
+        agent: str,
+        conversation: str,
+        project: str | None = None,
+        preferred: str | None = None,
     ) -> MemoryIngestResponse:
-        if not self._llm_available():
+        if not self._llm_available(preferred):
             return MemoryIngestResponse(reason="no-model")
         prompt = render(
             self._extraction(), conversation=conversation.strip() or "(empty conversation)"
         )
         try:
-            output = self._runner.complete("extraction", prompt) if self._runner else ""
+            output = (
+                self._runner.complete("extraction", prompt, preferred) if self._runner else ""
+            )
         except LlmUnavailable as err:
             return MemoryIngestResponse(reason=f"no-model: {err}")
         except Exception as err:
@@ -211,23 +250,35 @@ class MemoryModule:
         facts = _parse_facts(output)
         if not facts:
             return MemoryIngestResponse(reason="no-facts")
-        store = self._store(agent_home)
+        store = self._store(agent_home, preferred)
         metadata = {"source": "extraction"}
         if project:
             metadata["project"] = project
+        # Mem0 only accepts str, dict, or list[dict] input — a bare list of
+        # strings crashes inside parse_messages with AttributeError. Wrap
+        # each extracted fact as a user message so mem0 can store it.
+        # infer=False: our extraction prompt already did the extraction, and
+        # mem0's own LLM call can't carry gateway session headers.
+        messages = [{"role": "user", "content": fact} for fact in facts]
         try:
-            result = store.add(agent, facts, metadata, infer=True)
+            results = store.add(agent, messages, metadata, infer=False)
         except Exception as err:
             logger.warning("memory ingest write failed for %s: %s", agent, err)
             return MemoryIngestResponse(facts=facts, reason="store-error")
-        added = len(result.get("results", [])) if isinstance(result, dict) else 1
-        return MemoryIngestResponse(added=added, facts=facts)
+        return MemoryIngestResponse(added=len(results), facts=facts)
 
 
 def _parse_facts(output: str) -> list[str]:
     facts = []
     for line in output.splitlines():
-        fact = line.strip().lstrip("-").strip()
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith("```"):
+            continue
+        fact = line.lstrip("-").strip()
+        # Models often prepend a preamble ("Facts:") even when told to
+        # output facts only. Skip those instead of storing them as memories.
+        if fact.lower() in {"facts", "facts:", "here are the facts", "here are the facts:"}:
+            continue
         if fact:
             facts.append(fact)
     return facts[:MAX_FACTS_PER_INGEST]

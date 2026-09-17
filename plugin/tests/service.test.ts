@@ -53,3 +53,34 @@ describe("ServiceClient", () => {
     await expect(client.getJSON("/v1/agents/defoko")).rejects.toThrow("aborted");
   });
 });
+
+describe("ServiceClient.withModel", () => {
+  it("attaches the selected model as x-openark-model on every request", async () => {
+    const calls: RequestInit[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        calls.push(init ?? {});
+        return jsonResponse({ ok: true });
+      }),
+    );
+    const client = new ServiceClient("http://localhost:4000").withModel(
+      "opencode-go/deepseek-v4.1-flash",
+    );
+    await client.getJSON("/v1/agents/defoko");
+    await client.postJSON("/v1/agents/defoko/memory", { text: "x" });
+    expect(calls).toHaveLength(2);
+    for (const init of calls) {
+      expect((init.headers as Record<string, string>)["x-openark-model"]).toBe(
+        "opencode-go/deepseek-v4.1-flash",
+      );
+    }
+    // The original client is unchanged.
+    const plain = new ServiceClient("http://localhost:4000");
+    calls.length = 0;
+    await plain.getJSON("/v1/agents/defoko");
+    expect((calls[0].headers as Record<string, string> | undefined)?.["x-openark-model"]).toBe(
+      undefined,
+    );
+  });
+});

@@ -20,7 +20,7 @@ class AgentCreateRequest(BaseModel):
 
 class PersonaEvolveRequest(BaseModel):
     signals: list[str] = Field(default_factory=list)
-    threshold: int = 3
+    threshold: int = Field(default=3, ge=1, le=20)
 
 
 class PersonaReplace(BaseModel):
@@ -47,12 +47,12 @@ class MemoryRecallResponse(BaseModel):
 
 
 class MemoryCreateRequest(BaseModel):
-    text: str
+    text: str = Field(min_length=1)
     project: str | None = None
 
 
 class MemoryIngestRequest(BaseModel):
-    text: str
+    text: str = Field(min_length=1)
     project: str | None = None
 
 

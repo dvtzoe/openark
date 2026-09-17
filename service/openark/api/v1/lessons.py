@@ -14,6 +14,7 @@ from ...core.models import (
 from ...core.registry import AgentRegistry
 from ...modules.lessons import LessonsModule
 from .agents import get_registry, require_agent
+from .deps import preferred_model
 
 router = APIRouter(tags=["lessons"])
 
@@ -45,10 +46,11 @@ def reflect(
     request: ReflectRequest,
     registry: AgentRegistry = Depends(get_registry),
     module=Depends(get_lessons_module),
+    preferred: str | None = Depends(preferred_model),
 ):
     require_agent(registry, name)
     failures = [f.model_dump() for f in request.failures]
-    return module.reflect(registry, name, failures, request.messages)
+    return module.reflect(registry, name, failures, request.messages, preferred=preferred)
 
 
 @router.post("/agents/{name}/lessons", response_model=LessonAddResponse, status_code=201)

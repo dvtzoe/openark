@@ -1,5 +1,5 @@
 import { allModules } from "../modules/index.js";
-import type { AgentManifest, ModuleContext, OpenArkModule } from "./types.js";
+import type { AgentManifest, ModuleContext, ModuleTool, OpenArkModule } from "./types.js";
 
 // 32k fits a large core persona with drop-ins (chiai was 21.8k merged in
 // Sep 2026 and silently lost 20-human-voice.md under the old 16k cap) plus
@@ -31,7 +31,13 @@ export async function collectInjections(
   const blocks = [];
   for (const mod of active) {
     if (!mod.injections) continue;
-    blocks.push(...(await mod.injections(ctx)));
+    // Per-module isolation (MODULE_SPEC.md: failures degrade to a no-op):
+    // one throwing module must not silently disable the ones after it.
+    try {
+      blocks.push(...(await mod.injections(ctx)));
+    } catch (err) {
+      warn(ctx, `module ${mod.name} injections failed: ${String(err)}`);
+    }
   }
   blocks.sort((a, b) => b.priority - a.priority);
   const kept = [];
@@ -70,4 +76,23 @@ function warn(ctx: ModuleContext, message: string): void {
 
 export function manifestAllows(manifest: AgentManifest, moduleName: string): boolean {
   return manifest.modules[moduleName] === true;
+}
+
+// Tool specs for registration with opencode, enumerated from every known
+// module regardless of the default agent's manifest or service state. The
+// per-session gate lives in the execute wrapper (index.ts) — registering
+// from the startup agent's module set used to make tools unavailable for
+// the whole process if that agent had a module toggled off or the service
+// was briefly down at plugin init.
+export function collectToolSpecs(ctx: ModuleContext): ModuleTool[] {
+  const seen = new Set<string>();
+  const specs: ModuleTool[] = [];
+  for (const mod of allModules) {
+    for (const t of mod.tools?.(ctx) ?? []) {
+      if (seen.has(t.name)) continue;
+      seen.add(t.name);
+      specs.push(t);
+    }
+  }
+  return specs;
 }

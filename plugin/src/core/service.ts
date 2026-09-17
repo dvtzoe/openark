@@ -10,7 +10,20 @@
 const REQUEST_TIMEOUT_MS = 90_000;
 
 export class ServiceClient {
-  constructor(private baseUrl: string) {}
+  constructor(
+    private baseUrl: string,
+    private model?: string,
+  ) {}
+
+  withModel(model: string): ServiceClient {
+    return new ServiceClient(this.baseUrl, model);
+  }
+
+  private headers(extra?: Record<string, string>): Record<string, string> {
+    const headers: Record<string, string> = { ...extra };
+    if (this.model) headers["x-openark-model"] = this.model;
+    return headers;
+  }
 
   async health(): Promise<boolean> {
     try {
@@ -25,6 +38,7 @@ export class ServiceClient {
 
   async getJSON<T>(path: string): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
+      headers: this.headers(),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!res.ok) throw new ServiceError(path, res.status, await res.text());
@@ -34,7 +48,7 @@ export class ServiceClient {
   async postJSON<T>(path: string, body: unknown): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: this.headers({ "content-type": "application/json" }),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -45,6 +59,7 @@ export class ServiceClient {
   async delete(path: string): Promise<void> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method: "DELETE",
+      headers: this.headers(),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!res.ok) throw new ServiceError(path, res.status, await res.text());

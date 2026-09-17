@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import { linkSkills } from "../src/core/installer";
 import type { AgentManifest, ModuleContext, ServiceLike } from "../src/core/types";
 import { skillsModule } from "../src/modules/skills";
+
+vi.mock("../src/core/installer", () => ({
+  linkSkills: vi.fn(() => []),
+  opencodeConfigDir: vi.fn(() => "/tmp/opencode"),
+}));
 
 function fakeService(overrides: Record<string, unknown> = {}): ServiceLike {
   return {
@@ -68,5 +74,26 @@ describe("skillsModule", () => {
       {},
     );
     await expect(tools[2]?.execute({})).rejects.toThrow("name is required");
+  });
+});
+
+describe("skill_verify materialization", () => {
+  it("links the skill into opencode's skills dir after a successful verify", async () => {
+    const service = fakeService();
+    (service.postJSON as ReturnType<typeof vi.fn>).mockResolvedValue({
+      verified: true,
+      reason: null,
+    });
+    const tools = skillsModule.tools?.(ctx(service)) ?? [];
+    await tools[2]?.execute({ name: "release-checklist" });
+    expect(linkSkills).toHaveBeenCalled();
+
+    (linkSkills as ReturnType<typeof vi.fn>).mockClear();
+    (service.postJSON as ReturnType<typeof vi.fn>).mockResolvedValue({
+      verified: false,
+      reason: "not-found",
+    });
+    await tools[2]?.execute({ name: "nope" });
+    expect(linkSkills).not.toHaveBeenCalled();
   });
 });

@@ -14,15 +14,15 @@ class FakeMemoryModule:
     def ready(self, registry):
         return True
 
-    def recall(self, agent_home, agent, q="", limit=10):
+    def recall(self, agent_home, agent, q="", limit=10, preferred=None):
         return list(self.recall_results)
 
-    def add(self, agent_home, agent, text, project=None):
-        self.added.append((text, {"project": project}))
+    def add(self, agent_home, agent, text, project=None, preferred=None):
+        self.added.append((text, {"project": project, "preferred": preferred}))
         return {"id": "m1", "event": "ADD"}
 
-    def ingest(self, agent_home, agent, conversation, project=None):
-        self.ingested.append((conversation, {"project": project}))
+    def ingest(self, agent_home, agent, conversation, project=None, preferred=None):
+        self.ingested.append((conversation, {"project": project, "preferred": preferred}))
         return {"added": 1, "facts": ["User prefers vitest"]}
 
 
@@ -100,7 +100,9 @@ def test_memory_endpoints(client, fake_memory):
     )
     assert res.status_code == 201
     assert res.json() == {"id": "m1", "event": "ADD"}
-    assert fake_memory.added == [("likes neovim", {"project": "openark"})]
+    assert fake_memory.added == [
+        ("likes neovim", {"project": "openark", "preferred": None})
+    ]
 
     res = client.post(
         "/v1/agents/defoko/memory/ingest", json={"text": "user: I use neovim", "project": "openark"}
@@ -108,6 +110,23 @@ def test_memory_endpoints(client, fake_memory):
     assert res.status_code == 200
     assert res.json()["added"] == 1
     assert res.json()["facts"] == ["User prefers vitest"]
+
+
+def test_selected_model_header_is_forwarded(client, fake_memory):
+    client.post("/v1/agents", json={"name": "defoko"})
+    headers = {"x-openark-model": "opencode-go/deepseek-v4.1-flash"}
+    client.get("/v1/agents/defoko/memory/recall", headers=headers)
+    client.post("/v1/agents/defoko/memory", json={"text": "x"}, headers=headers)
+    client.post("/v1/agents/defoko/memory/ingest", json={"text": "x"}, headers=headers)
+    assert fake_memory.added[0][1]["preferred"] == "opencode-go/deepseek-v4.1-flash"
+    assert fake_memory.ingested[0][1]["preferred"] == "opencode-go/deepseek-v4.1-flash"
+    # A malformed hint is ignored, not forwarded.
+    client.post(
+        "/v1/agents/defoko/memory",
+        json={"text": "y"},
+        headers={"x-openark-model": "not-a-model"},
+    )
+    assert fake_memory.added[1][1]["preferred"] is None
 
 
 def test_memory_unknown_agent_404(client):
@@ -134,7 +153,7 @@ def test_persona_endpoints(client, monkeypatch):
     assert client.get("/v1/agents/defoko/persona").status_code == 200
 
     class FakePersonaModule:
-        def evolve(self, registry, agent, signals, threshold=3):
+        def evolve(self, registry, agent, signals, threshold=3, preferred=None):
             return {
                 "updated": True,
                 "added": ["Likes dark mode"],
@@ -177,7 +196,7 @@ def test_lessons_endpoints(client, monkeypatch):
 
             return [LessonEntry(id="abc", rule="Run make lint", source="reflection:bash", hits=2)]
 
-        def reflect(self, registry, agent, failures, messages=None):
+        def reflect(self, registry, agent, failures, messages=None, preferred=None):
             self.reflected = (failures, messages)
             return {
                 "added": [
@@ -254,7 +273,7 @@ def test_skills_endpoints(client):
                 return [SkillFile(slug="d", name="draft-skill", description="d", status="draft")]
             return [SkillFile(slug="v", name="live-skill", description="v", status="verified")]
 
-        def distill(self, registry, agent, trace):
+        def distill(self, registry, agent, trace, preferred=None):
             self.distilled = trace
             return {
                 "created": {"name": "release-checklist", "description": "x", "status": "draft"},

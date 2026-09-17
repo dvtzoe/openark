@@ -1,4 +1,5 @@
 import logging
+import re
 from pathlib import Path
 
 from ..core.llm import LlmUnavailable, TaskRunner
@@ -14,12 +15,30 @@ EVOLVING_MAIN = "persona.evolving.md"
 
 
 class _FragmentState:
-    """One evolving persona file, split into header lines and bullets."""
+    """One evolving persona file, split into lines and the bullets in them.
+
+    Bullets are tracked by their line index so rewriting a fragment keeps
+    headings, blank lines, and section order exactly as the user/agent wrote
+    them (a naive header-then-bullets rebuild reordered drop-ins).
+    """
 
     def __init__(self, path: Path, label: str, content: str):
         self.path = path
         self.label = label
-        self.header, self.bullets = _split_evolving(content)
+        self.lines, self.bullets, self.bullet_lines = _split_evolving(content)
+
+    def rewrite(self, pool: list[str]) -> None:
+        for i, bullet in enumerate(pool):
+            if i < len(self.bullets):
+                if bullet != self.bullets[i]:
+                    self.lines[self.bullet_lines[i]] = BULLET + bullet
+            else:
+                self.lines.append(BULLET + bullet)
+                self.bullet_lines.append(len(self.lines) - 1)
+        self.bullets = list(pool)
+
+    def format(self) -> str:
+        return _format_evolving(self.lines)
 
 
 class PersonaModule:
@@ -44,12 +63,13 @@ class PersonaModule:
         agent: str,
         signals: list[str],
         threshold: int = DEFAULT_THRESHOLD,
+        preferred: str | None = None,
     ) -> PersonaEvolveResponse:
         distinct = list(dict.fromkeys(s.strip() for s in signals if s.strip()))
         if len(distinct) < threshold:
             return PersonaEvolveResponse(reason="below-threshold")
 
-        if self._runner is None or not self._runner.available("persona_update"):
+        if self._runner is None or not self._runner.available("persona_update", preferred):
             return PersonaEvolveResponse(reason="no-model")
 
         # Evolving persona = main file + drop-ins under persona.evolving.md.d/.
@@ -70,7 +90,7 @@ class PersonaModule:
             threshold=str(threshold),
         )
         try:
-            output = self._runner.complete("persona_update", prompt)
+            output = self._runner.complete("persona_update", prompt, preferred)
         except LlmUnavailable as err:
             return PersonaEvolveResponse(reason=f"no-model: {err}")
         except Exception as err:
@@ -91,7 +111,8 @@ class PersonaModule:
         for state, pool in zip(states, pools, strict=True):
             if pool == state.bullets:
                 continue
-            registry.write_persona_fragment(agent, state.path, _format_evolving(state.header, pool))
+            state.rewrite(pool)
+            registry.write_persona_fragment(agent, state.path, state.format())
             changed.append(state.label)
 
         registry.audit(
@@ -104,27 +125,47 @@ class PersonaModule:
         )
 
 
-def _split_evolving(content: str) -> tuple[list[str], list[str]]:
-    header: list[str] = []
-    preferences: list[str] = []
-    for line in content.splitlines():
+def _split_evolving(content: str) -> tuple[list[str], list[str], list[int]]:
+    lines = content.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    bullets: list[str] = []
+    bullet_lines: list[int] = []
+    for index, line in enumerate(lines):
         if line.startswith(BULLET):
-            preferences.append(line[len(BULLET) :].strip())
-        else:
-            header.append(line)
-    while header and not header[-1].strip():
-        header.pop()
-    return header, preferences
+            bullets.append(line[len(BULLET) :].strip())
+            bullet_lines.append(index)
+    return lines, bullets, bullet_lines
 
 
 def _format_preferences(preferences: list[str]) -> str:
     return "\n".join(f"{BULLET}{p}" for p in preferences) if preferences else "(none yet)"
 
 
-def _format_evolving(header: list[str], preferences: list[str]) -> str:
-    parts = ["\n".join(header).rstrip(), ""] if header else []
-    parts.extend(f"{BULLET}{p}" for p in preferences)
-    return "\n".join(parts).rstrip() + "\n"
+def _format_evolving(lines: list[str]) -> str:
+    return "\n".join(lines).rstrip() + "\n"
+
+
+_NO_CHANGE_RE = re.compile(r"^(?:none|no changes?|nothing to (?:add|change)|n/?a)\b", re.IGNORECASE)
+_META_RE = re.compile(
+    r"\bno (?:new )?(?:preference|change|update)s? "
+    r"(?:clear|clears|cleared|meet|meets|met|is|are|needed|required)\b|"
+    r"^(?:current preferences|new signals|here(?:'s| is)|the following|analysis)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_proposal_noise(line: str) -> bool:
+    """True for lines that are model prose/format noise, not a preference."""
+    if not line:
+        return True
+    if line.startswith("#") or line.startswith("```"):
+        return True
+    if line.endswith(":"):
+        return True
+    if len(line) > 240:
+        return True
+    return bool(_NO_CHANGE_RE.match(line) or _META_RE.search(line))
 
 
 def _parse_proposal(output: str) -> tuple[list[str], list[tuple[str, str]]]:
@@ -141,11 +182,11 @@ def _parse_proposal(output: str) -> tuple[list[str], list[tuple[str, str]]]:
                 j += 1
             new = lines[j].lstrip("-").strip() if j < len(lines) else ""
             i = j
-            if old and new:
+            if old and new and not _is_proposal_noise(new):
                 replaces.append((old, new))
         elif line:
             candidate = line.lstrip("-").strip()
-            if candidate:
+            if candidate and not _is_proposal_noise(candidate):
                 adds.append(candidate)
         i += 1
     return _dedupe(adds), replaces

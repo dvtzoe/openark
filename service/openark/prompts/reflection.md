@@ -15,7 +15,8 @@ Then emit each rule as a single line prefixed "RULE: ".
 Also scan the user messages for corrections of the agent's behavior; each
 correction becomes a rule the same way.
 
-Rules already learned (do not restate them):
+Rules already learned (do not restate; re-emit a retired rule only if it
+clearly recurs):
 {lessons}
 
 Only emit rules that generalize beyond this exact instance. Skip failures

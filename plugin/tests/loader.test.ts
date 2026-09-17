@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_BUDGET_CHARS, collectInjections, manifestAllows } from "../src/core/loader";
+import {
+  DEFAULT_BUDGET_CHARS,
+  collectInjections,
+  collectToolSpecs,
+  manifestAllows,
+} from "../src/core/loader";
 import type { AgentManifest, ModuleContext, OpenArkModule } from "../src/core/types";
 
 function manifest(overrides: Record<string, boolean> = {}): AgentManifest {
@@ -136,5 +141,38 @@ describe("collectInjections", () => {
     const text = await collectInjections(mods, warnCtx, 100);
     expect(text).not.toContain("## mem");
     expect(log).toHaveBeenCalledWith("warn", expect.stringContaining("dropping"));
+  });
+});
+
+describe("collectToolSpecs", () => {
+  it("enumerates every module's tools regardless of manifest toggles", () => {
+    const ctx = {
+      agent: "defoko",
+      manifest: manifest(), // all modules disabled
+      service: {},
+      log: () => {},
+    } as unknown as ModuleContext;
+    const names = collectToolSpecs(ctx).map((t) => t.name);
+    for (const expected of [
+      "memory_add",
+      "memory_search",
+      "persona_evolve",
+      "reflect",
+      "skill_distill",
+      "channel_share",
+    ]) {
+      expect(names).toContain(expected);
+    }
+  });
+
+  it("deduplicates tool names across modules", () => {
+    const ctx = {
+      agent: "defoko",
+      manifest: manifest(),
+      service: {},
+      log: () => {},
+    } as unknown as ModuleContext;
+    const names = collectToolSpecs(ctx).map((t) => t.name);
+    expect(new Set(names).size).toBe(names.length);
   });
 });

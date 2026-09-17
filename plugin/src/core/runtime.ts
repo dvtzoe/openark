@@ -1,3 +1,4 @@
+import { ServiceError } from "./service.js";
 import type { AgentManifest, ModuleContext, OpenArkModule } from "./types.js";
 import type { ServiceLike } from "./types.js";
 
@@ -8,7 +9,7 @@ export type Runtime = {
   manifest(sessionID?: string): AgentManifest | null;
   active(sessionID?: string): OpenArkModule[];
   ctx(sessionID?: string): ModuleContext | null;
-  noteSession(sessionID: string, agent: string): Promise<void>;
+  noteSession(sessionID: string, agent: string, model?: string): Promise<void>;
   forgetSession(sessionID: string): void;
   onUserMessage(sessionID: string, text: string): Promise<void>;
   onToolResult(
@@ -26,6 +27,7 @@ export type RuntimeDeps = {
   loadModules(ctx: ModuleContext): Promise<OpenArkModule[]>;
   collectInjections(active: OpenArkModule[], ctx: ModuleContext): Promise<string>;
   log: RuntimeLogger;
+  directory?: string;
 };
 
 type Loaded = {
@@ -40,11 +42,10 @@ type Loaded = {
 const NATIVE_PASSTHROUGH = new Set(["build", "plan"]);
 
 function isNotFound(err: unknown): boolean {
-  if (typeof err === "object" && err !== null && "status" in err) {
-    if ((err as { status?: unknown }).status === 404) return true;
-  }
-  const text = String(err);
-  return text.includes("404") || text.includes("no such agent") || text.includes("not found");
+  // Strict: only a real 404 from the service means "not an openark agent".
+  // Substring matching used to cache transient errors (or any text that
+  // happened to mention "404") as permanently unavailable.
+  return err instanceof ServiceError && err.status === 404;
 }
 
 // Every session gets its own ModuleContext (built fresh per call by
@@ -60,29 +61,37 @@ export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
   // of paying one 404 + one warn line per session first turn. Only 404s
   // are cached here — transient errors (service down) retry next time.
   const unavailable = new Set<string>(NATIVE_PASSTHROUGH);
+  // The model selected in the TUI for a session, forwarded to the service
+  // so background LLM tasks (extraction, reflection, persona updates) have
+  // a route even when opencode has no small_model configured.
+  const sessionModels = new Map<string, string>();
   // Which (session, agent) pairs have already had their "session start"
   // manifest read. MODULE_SPEC.md promises the manifest is re-read (so a
   // module toggle takes effect) at session start, not cached for the whole
   // plugin process — see docs/plans/0003-findings-plugin-core.md #2.
   const sessionSeenAgents = new Map<string, Set<string>>();
 
-  async function loadAgent(name: string): Promise<Loaded | null> {
-    if (loaded.has(name)) return loaded.get(name) ?? null;
-    if (unavailable.has(name)) return null;
+  function baseCtx(name: string, manifest: AgentManifest): ModuleContext {
+    return {
+      agent: name,
+      manifest,
+      service: deps.service,
+      log: deps.log,
+      directory: deps.directory,
+    };
+  }
+
+  function announce(entry: Loaded): void {
+    const names = entry.active.map((m) => m.name).join(", ") || "none";
+    deps.log("info", `agent "${entry.agent}" loaded modules: ${names}`);
+  }
+
+  async function fetchAgent(name: string): Promise<Loaded | null> {
     try {
       const manifest = await deps.service.getJSON<AgentManifest>(`/v1/agents/${name}`);
-      const ctx: ModuleContext = {
-        agent: name,
-        manifest,
-        service: deps.service,
-        log: deps.log,
-      };
+      const ctx = baseCtx(name, manifest);
       const active = await deps.loadModules(ctx);
-      const entry = { agent: name, ctx, active };
-      loaded.set(name, entry);
-      const names = active.map((m) => m.name).join(", ") || "none";
-      deps.log("info", `agent "${name}" loaded modules: ${names}`);
-      return entry;
+      return { agent: name, ctx, active };
     } catch (err) {
       if (isNotFound(err)) {
         // Not an openark agent (e.g. opencode's native build/plan): quiet
@@ -96,7 +105,18 @@ export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
     }
   }
 
-  const defaultLoaded = await loadAgent(deps.defaultAgent);
+  async function loadAgent(name: string): Promise<Loaded | null> {
+    if (loaded.has(name)) return loaded.get(name) ?? null;
+    if (unavailable.has(name)) return null;
+    const entry = await fetchAgent(name);
+    if (entry) {
+      loaded.set(name, entry);
+      announce(entry);
+    }
+    return entry;
+  }
+
+  let defaultLoaded = await loadAgent(deps.defaultAgent);
 
   function resolve(sessionID?: string): Loaded | null {
     if (sessionID && sessionAgent.has(sessionID)) {
@@ -110,7 +130,13 @@ export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
   }
 
   function withSession(entry: Loaded, sessionID?: string): ModuleContext {
-    return { ...entry.ctx, session: sessionID ? { id: sessionID } : undefined };
+    const model = sessionID ? sessionModels.get(sessionID) : undefined;
+    const service = model && deps.service.withModel ? deps.service.withModel(model) : deps.service;
+    return {
+      ...entry.ctx,
+      service,
+      session: sessionID ? { id: sessionID, model } : undefined,
+    };
   }
 
   return {
@@ -126,21 +152,50 @@ export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
     },
     enabledModules: (sessionID) => resolve(sessionID)?.active.map((m) => m.name) ?? [],
 
-    async noteSession(sessionID, agentName) {
+    async noteSession(sessionID, agentName, model) {
       if (!agentName) return;
       sessionAgent.set(sessionID, agentName);
+      if (model) sessionModels.set(sessionID, model);
       const seen = sessionSeenAgents.get(sessionID) ?? new Set<string>();
-      if (!seen.has(agentName)) {
-        seen.add(agentName);
-        sessionSeenAgents.set(sessionID, seen);
+      if (seen.has(agentName)) return;
+      seen.add(agentName);
+      sessionSeenAgents.set(sessionID, seen);
+      // Known non-openark agent (native build/plan or a previous 404):
+      // nothing to refresh, don't pay another fetch per session.
+      if (unavailable.has(agentName)) return;
+      // Session-start manifest refresh: fetch the replacement first and
+      // swap it in only on success, so a concurrent session never resolves
+      // to null mid-reload and a transient failure keeps the old entry.
+      const previous = loaded.get(agentName);
+      const fresh = await fetchAgent(agentName);
+      if (fresh) {
+        loaded.set(agentName, fresh);
+        if (agentName === deps.defaultAgent) defaultLoaded = fresh;
+        announce(fresh);
+      } else if (unavailable.has(agentName)) {
+        // The agent was deleted (or never existed): drop the cached entry.
         loaded.delete(agentName);
+        if (agentName === deps.defaultAgent) defaultLoaded = null;
+      } else if (previous) {
+        loaded.set(agentName, previous);
       }
-      await loadAgent(agentName);
     },
 
     forgetSession(sessionID) {
+      const agentName = sessionAgent.get(sessionID);
       sessionAgent.delete(sessionID);
       sessionSeenAgents.delete(sessionID);
+      sessionModels.delete(sessionID);
+      const entry = agentName ? loaded.get(agentName) : undefined;
+      if (!entry) return;
+      const ctx = withSession(entry, sessionID);
+      for (const mod of entry.active) {
+        try {
+          mod.onSessionDeleted?.(ctx);
+        } catch (err) {
+          deps.log("warn", `module ${mod.name} session cleanup failed: ${String(err)}`);
+        }
+      }
     },
 
     async onUserMessage(sessionID, text) {
@@ -148,7 +203,11 @@ export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
       if (!entry) return;
       const ctx = withSession(entry, sessionID);
       for (const mod of entry.active) {
-        await mod.onUserMessage?.(ctx, { role: "user", text });
+        try {
+          await mod.onUserMessage?.(ctx, { role: "user", text });
+        } catch (err) {
+          deps.log("warn", `module ${mod.name} onUserMessage failed: ${String(err)}`);
+        }
       }
     },
 
@@ -157,7 +216,11 @@ export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
       if (!entry) return;
       const ctx = withSession(entry, sessionID);
       for (const mod of entry.active) {
-        await mod.onToolResult?.(ctx, result);
+        try {
+          await mod.onToolResult?.(ctx, result);
+        } catch (err) {
+          deps.log("warn", `module ${mod.name} onToolResult failed: ${String(err)}`);
+        }
       }
     },
 
@@ -166,6 +229,8 @@ export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
         const entry = resolve(sessionID);
         if (entry) await flush(entry, withSession(entry, sessionID));
         sessionAgent.delete(sessionID);
+        sessionSeenAgents.delete(sessionID);
+        sessionModels.delete(sessionID);
         return;
       }
       // No sessionID means the whole plugin process is shutting down
@@ -176,6 +241,8 @@ export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
         if (entry) await flush(entry, withSession(entry, sid));
       }
       sessionAgent.clear();
+      sessionSeenAgents.clear();
+      sessionModels.clear();
     },
 
     async injections(sessionID) {
@@ -187,11 +254,12 @@ export async function createRuntime(deps: RuntimeDeps): Promise<Runtime> {
 }
 
 async function flush(entry: Loaded, ctx: ModuleContext): Promise<void> {
-  try {
-    for (const mod of entry.active) {
+  for (const mod of entry.active) {
+    try {
       await mod.onSessionEnd?.(ctx);
+    } catch (err) {
+      // Per-module isolation: one failing module must not skip the rest.
+      ctx.log("warn", `module ${mod.name} session flush failed: ${String(err)}`);
     }
-  } catch (err) {
-    ctx.log("warn", `session flush failed: ${String(err)}`);
   }
 }

@@ -4,6 +4,7 @@ from ...core.models import PersonaEvolveRequest, PersonaEvolveResponse, PersonaR
 from ...core.registry import AgentNotFound, AgentRegistry
 from ...modules.persona import PersonaModule
 from .agents import get_registry, require_agent
+from .deps import preferred_model
 
 router = APIRouter(tags=["persona"])
 
@@ -27,9 +28,12 @@ def evolve_persona(
     request: PersonaEvolveRequest,
     registry: AgentRegistry = Depends(get_registry),
     module=Depends(get_persona_module),
+    preferred: str | None = Depends(preferred_model),
 ):
     require_agent(registry, name)
-    return module.evolve(registry, name, request.signals, threshold=request.threshold)
+    return module.evolve(
+        registry, name, request.signals, threshold=request.threshold, preferred=preferred
+    )
 
 
 @router.get("/personas", response_model=list[str])

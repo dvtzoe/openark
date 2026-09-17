@@ -20,6 +20,7 @@ memory, and home directory, and share selected memories between them.
 > reflection, skills, channels, and the installer work end-to-end against a
 > live opencode. Expect rough edges and prompt iteration. See
 > [docs/plans/phases.md](docs/plans/phases.md) and [ROADMAP.md](ROADMAP.md).
+> Targets OpenCode 2.x (the V2 plugin API, `@opencode/plugin`).
 
 ## Why openark?
 
@@ -145,7 +146,9 @@ toggles apply at the next session start:
 The service port and per-task model routing live in `~/.openark/openark.json`.
 By default background tasks (`extraction`, `reflection`, `distillation`,
 `persona_update`, `embeddings`) inherit the `small_model` configured in
-opencode; override any of them per task:
+opencode; if that isn't set, they fall back to the model selected for the
+current opencode session, forwarded automatically by the plugin. Override any
+of them per task:
 
 ```json
 {
@@ -155,6 +158,10 @@ opencode; override any of them per task:
   }
 }
 ```
+
+`embeddings` is the exception: it never uses the session's chat model (chat
+gateways can't embed). It uses an explicit `models.embeddings` route when
+configured, otherwise the local fastembed default.
 
 Useful environment variables: `OPENARK_HOME` (state root, default
 `~/.openark`), `OPENCODE_CONFIG_DIR` (default `~/.config/opencode`),

@@ -19,10 +19,10 @@ class FakeRunner:
         self._available = available
         self.calls = []
 
-    def available(self, task):
+    def available(self, task, preferred=None):
         return self._available
 
-    def complete(self, task, prompt):
+    def complete(self, task, prompt, preferred=None):
         self.calls.append((task, prompt))
         if self.fail:
             raise self.fail

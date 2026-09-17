@@ -1,23 +1,34 @@
 #!/usr/bin/env bun
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  cpSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { seedAgentHome } from "./core/agent-template.js";
-import { bootstrapVenv, installedVenvPython } from "./core/bootstrap.js";
+import { bootstrapVenv } from "./core/bootstrap.js";
 import { agentHome, openarkHome, readGlobalConfig, serviceBaseUrl } from "./core/config.js";
 import { type DoctorCheck, runDoctor } from "./core/doctor.js";
 import {
   installAll,
+  isManagedFile,
   listAgents,
+  opencodeConfigDir,
   packageRoot,
   readAgentDescription,
   uninstallAll,
 } from "./core/installer.js";
 import {
   clearServicePid,
-  devVenvPython,
   isProcessAlive,
+  openServiceLog,
   readServicePid,
+  resolveServicePython,
   serviceDirFromEnv,
   stopService,
   waitForHealth,
@@ -90,7 +101,7 @@ function seedFromPersona(dir: string, name: string, persona: string): void {
   const manifest = JSON.parse(readFileSync(join(source, "agent.json"), "utf8"));
   seedAgentHome(dir, name, manifest.description);
   for (const file of ["persona.core.md", "persona.evolving.md"]) {
-    const content = readFileSync(join(source, file), "utf8").replace(/^# defoko/m, `# ${name}`);
+    const content = readFileSync(join(source, file), "utf8").replace(/^#\s+.*$/m, `# ${name}`);
     rmSync(join(dir, file));
     writeFileSync(join(dir, file), content);
     // Bundled personas may ship drop-in directories (persona.<base>.md.d/);
@@ -126,10 +137,19 @@ function createAgent(name: string, persona?: string): void {
 }
 
 function removeAgent(name: string, yes: boolean): void {
+  // Same validation as createAgent: without it `openark rm ../../Documents`
+  // would path-join out of the agents directory and delete arbitrary trees.
+  if (!/^[a-z][a-z0-9-]*$/.test(name)) {
+    fail("agent names are lowercase, may contain digits and hyphens");
+  }
   const dir = agentHome(name);
   if (!existsSync(dir)) fail(`no such agent: ${name}`);
   if (!yes) fail(`refusing to delete ${dir} without --yes`);
   rmSync(dir, { recursive: true, force: true });
+  // Also drop the generated opencode agent file, otherwise opencode keeps
+  // listing the deleted agent until an install prunes it.
+  const agentFile = join(opencodeConfigDir(), "agents", `${name}.md`);
+  if (isManagedFile(agentFile)) rmSync(agentFile, { force: true });
   console.log(`deleted ${dir}`);
 }
 
@@ -139,10 +159,8 @@ function packageVersion(): string {
 }
 
 function servicePython(): string {
-  const homeVenv = installedVenvPython();
-  if (existsSync(homeVenv)) return homeVenv;
-  const devVenv = devVenvPython(serviceDirFromEnv());
-  if (existsSync(devVenv)) return devVenv;
+  const python = resolveServicePython();
+  if (python) return python;
   return fail("service venv missing — run: openark install (or `make dev` in a dev checkout)");
 }
 
@@ -174,6 +192,9 @@ async function startService(foreground: boolean): Promise<void> {
     console.log(pid !== null ? `service: already up (pid ${pid})` : "service: already up");
     return;
   }
+  // Daemon output goes to ~/.openark/logs/service.log so a failed start
+  // (bad venv, import error, port conflict) leaves a readable traceback.
+  const logFd = openServiceLog(home);
   const child = spawn(
     python,
     [
@@ -185,11 +206,21 @@ async function startService(foreground: boolean): Promise<void> {
       "--port",
       String(config.servicePort),
     ],
-    { stdio: "ignore", detached: true },
+    {
+      stdio: logFd === null ? "ignore" : ["ignore", logFd, logFd],
+      detached: true,
+    },
   );
+  if (logFd !== null) closeSync(logFd);
   child.on("error", (err) => fail(`failed to start service: ${String(err)}`));
   child.unref();
-  if (child.pid !== undefined) writeServicePid(home, child.pid);
+  if (child.pid !== undefined) {
+    try {
+      writeServicePid(home, child.pid);
+    } catch {
+      // best-effort; stop can still find the service by port
+    }
+  }
   if (await waitForHealth(client)) {
     console.log(
       child.pid !== undefined
@@ -197,7 +228,7 @@ async function startService(foreground: boolean): Promise<void> {
         : `service: up on 127.0.0.1:${config.servicePort}`,
     );
   } else {
-    fail("service did not become healthy in time — check ~/.openark/logs/");
+    fail("service did not become healthy in time — check ~/.openark/logs/service.log");
   }
 }
 
@@ -218,6 +249,10 @@ async function stopServiceCmd(): Promise<void> {
     console.log("service: not running");
   } else if (result.reason === "timeout") {
     fail(`service pid ${result.pid} did not stop in time (SIGKILL sent)`);
+  } else if (result.reason === "not-service") {
+    fail(
+      `process ${result.pid} does not look like the openark service — refusing to kill it (stale pid file cleared)`,
+    );
   } else {
     fail("service seems up but no pid file found — kill the uvicorn process by hand");
   }
@@ -233,6 +268,8 @@ async function restartServiceCmd(foreground: boolean): Promise<void> {
     console.log("service: was not running");
   } else if (result.reason === "timeout") {
     fail(`service pid ${result.pid} did not stop in time — aborting restart`);
+  } else if (result.reason === "not-service") {
+    fail(`process ${result.pid} does not look like the openark service — aborting restart`);
   } else {
     fail("service seems up but no pid file found — kill the uvicorn process by hand first");
   }
@@ -334,9 +371,12 @@ switch (command) {
     listAgentsCmd();
     break;
   case "create": {
-    const name = args.find((a) => !a.startsWith("--"));
     const personaIndex = args.indexOf("--persona");
     const persona = personaIndex >= 0 ? args[personaIndex + 1] : undefined;
+    if (personaIndex >= 0 && !persona) {
+      fail("usage: openark create <name> [--persona defoko]");
+    }
+    const name = args.find((arg, index) => !arg.startsWith("--") && index !== personaIndex + 1);
     if (!name) fail("usage: openark create <name> [--persona defoko]");
     createAgent(name, persona);
     break;

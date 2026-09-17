@@ -55,11 +55,13 @@ class SkillsModule:
             )
         return [s for s in skills if s is not None]
 
-    def distill(self, registry: AgentRegistry, agent: str, trace: str) -> DistillResponse:
+    def distill(
+        self, registry: AgentRegistry, agent: str, trace: str, preferred: str | None = None
+    ) -> DistillResponse:
         trace = trace.strip()
         if not trace:
             return DistillResponse(reason="empty-trace")
-        if self._runner is None or not self._runner.available("distillation"):
+        if self._runner is None or not self._runner.available("distillation", preferred):
             return DistillResponse(reason="no-model")
 
         agent_home = registry.agent_home(agent)
@@ -67,7 +69,7 @@ class SkillsModule:
         skills_block = "\n".join(f"- {s.name}: {s.description}" for s in existing) or "(none yet)"
         prompt = render(self._prompt(), skills=skills_block, trace=trace)
         try:
-            output = self._runner.complete("distillation", prompt)
+            output = self._runner.complete("distillation", prompt, preferred)
         except LlmUnavailable as err:
             return DistillResponse(reason=f"no-model: {err}")
         except Exception as err:

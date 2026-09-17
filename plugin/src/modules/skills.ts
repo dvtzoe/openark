@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { requiredString } from "../core/args.js";
+import { openarkHome } from "../core/config.js";
+import { linkSkills, opencodeConfigDir } from "../core/installer.js";
 import type { InjectionBlock, ModuleContext, ModuleTool, OpenArkModule } from "../core/types.js";
 import type { components } from "../generated/api-types.js";
 
@@ -8,8 +10,11 @@ type DistillResponse = components["schemas"]["DistillResponse"];
 type SkillVerifyResponse = components["schemas"]["SkillVerifyResponse"];
 type Skill = components["schemas"]["SkillSummary"];
 
-const skillDistillArgs = z.object({ trace: requiredString("trace is required") });
-const skillVerifyArgs = z.object({ name: requiredString("name is required") });
+const skillDistillShape = { trace: requiredString("trace is required") };
+const skillDistillArgs = z.object(skillDistillShape);
+const skillVerifyShape = { name: requiredString("name is required") };
+const skillVerifyArgs = z.object(skillVerifyShape);
+const skillsListShape = { all: z.boolean().optional() };
 
 export const skillsModule: OpenArkModule = {
   name: "skills",
@@ -46,6 +51,7 @@ export const skillsModule: OpenArkModule = {
         description:
           "Distill a successfully completed multi-step workflow into a reusable draft skill. " +
           "Pass the workflow trace (what you did, in order) as the trace argument.",
+        argsSchema: skillDistillShape,
         execute: async (args) => {
           const { trace } = skillDistillArgs.parse(args);
           return ctx.service.postJSON<DistillResponse>(`/v1/agents/${ctx.agent}/skills/distill`, {
@@ -56,6 +62,7 @@ export const skillsModule: OpenArkModule = {
       {
         name: "skills_list",
         description: "List learned skills (verified by default; pass all: true to include drafts)",
+        argsSchema: skillsListShape,
         execute: async (args) => {
           const includeDrafts = args.all === true;
           return ctx.service.getJSON<SkillsResponse>(
@@ -68,12 +75,24 @@ export const skillsModule: OpenArkModule = {
         description:
           "Verify a draft skill by name, promoting it so it is advertised and materialized " +
           "as an opencode skill. Use after one successful reuse or explicit user approval.",
+        argsSchema: skillVerifyShape,
         execute: async (args) => {
           const { name: slug } = skillVerifyArgs.parse(args);
-          return ctx.service.postJSON<SkillVerifyResponse>(
+          const result = await ctx.service.postJSON<SkillVerifyResponse>(
             `/v1/agents/${ctx.agent}/skills/${encodeURIComponent(slug)}/verify`,
             {},
           );
+          if (result.verified) {
+            // Materialize immediately so the next injection's promise ("this
+            // exists as an opencode skill") is true without an `openark
+            // install` round-trip.
+            try {
+              linkSkills(opencodeConfigDir(), openarkHome());
+            } catch (err) {
+              ctx.log("warn", `skill link after verify failed: ${String(err)}`);
+            }
+          }
+          return result;
         },
       },
     ];

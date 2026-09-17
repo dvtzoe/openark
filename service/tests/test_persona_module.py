@@ -12,10 +12,10 @@ class FakeRunner:
         self._available = available
         self.calls = []
 
-    def available(self, task):
+    def available(self, task, preferred=None):
         return self._available
 
-    def complete(self, task, prompt):
+    def complete(self, task, prompt, preferred=None):
         self.calls.append((task, prompt))
         if self.fail:
             raise self.fail
@@ -250,3 +250,36 @@ def test_evolve_never_touches_core_or_core_dropins(registry):
 
     assert (home / "persona.core.md").read_text() == "# untouchable core\n"
     assert (home / "persona.core.md.d" / "10-config.md").read_text() == "User config rule\n"
+
+
+def test_evolve_ignores_prose_no_change_reply(registry):
+    module = make_module(FakeRunner(output="No preference clears the threshold yet.\n"))
+    result = module.evolve(registry, "defoko", ["a", "b", "c"])
+    assert result.updated is False
+    assert result.reason == "no-changes"
+    assert registry.read_persona("defoko")[1] == EVOLVING
+
+
+def test_evolve_ignores_headings_and_preambles(registry):
+    module = make_module(FakeRunner(output="# Proposal\nHere's what I found:\nDislikes emoji\n"))
+    result = module.evolve(registry, "defoko", ["a", "b", "c"])
+    assert result.updated is True
+    assert result.added == ["Dislikes emoji"]
+    assert "Here's what I found" not in registry.read_persona("defoko")[1]
+
+
+def test_evolve_preserves_dropin_section_order(registry):
+    home = registry.agent_home("defoko")
+    (home / "persona.evolving.md.d").mkdir()
+    (home / DROPIN).write_text(
+        "## Style\n\n- Likes short code blocks\n\n## Tools\n\n- Prefers ripgrep\n"
+    )
+
+    module = make_module(
+        FakeRunner(output="- replaces: Likes short code blocks\nPrefers verbose samples\n")
+    )
+    result = module.evolve(registry, "defoko", ["a", "b", "c"])
+    assert result.updated is True
+    assert (home / DROPIN).read_text() == (
+        "## Style\n\n- Prefers verbose samples\n\n## Tools\n\n- Prefers ripgrep\n"
+    )

@@ -16,6 +16,7 @@ import {
   installAll,
   installCommands,
   installPluginShim,
+  isOpenarkLink,
   linkSkills,
   listAgents,
   opencodeConfigDir,
@@ -78,7 +79,7 @@ describe("installPluginShim", () => {
   it("writes a shim pointing at the plugin dist", () => {
     const shim = installPluginShim(configDir);
     const content = readFileSync(shim, "utf8");
-    expect(content).toContain("export { plugin, default } from");
+    expect(content).toContain("export { default } from");
     expect(content).toContain("file://");
   });
 });
@@ -243,5 +244,77 @@ describe("uninstallAll", () => {
     expect(result.agentFiles).toEqual([]);
     expect(result.skillLinks).toEqual([]);
     expect(result.commandFiles).toEqual([]);
+  });
+});
+
+describe("command ownership", () => {
+  it("does not clobber a user-owned command with a bundled name", () => {
+    const commandsSrc = mkdtempSync(join(tmpdir(), "openark-cmds-"));
+    try {
+      const target = join(configDir, "commands");
+      mkdirSync(target, { recursive: true });
+      const userFile = join(target, "learn.md");
+      writeFileSync(userFile, "user's own command\n");
+      writeFileSync(join(commandsSrc, "learn.md"), "bundled command\n");
+
+      installCommands(configDir, commandsSrc);
+      expect(readFileSync(userFile, "utf8")).toBe("user's own command\n");
+
+      // Uninstall must not delete it either.
+      const removed = uninstallCommands(configDir, commandsSrc);
+      expect(removed).toEqual([]);
+      expect(existsSync(userFile)).toBe(true);
+    } finally {
+      rmSync(commandsSrc, { recursive: true, force: true });
+    }
+  });
+
+  it("updates its own installed command on reinstall and removes it on uninstall", () => {
+    const commandsSrc = mkdtempSync(join(tmpdir(), "openark-cmds-"));
+    try {
+      writeFileSync(join(commandsSrc, "learn.md"), "v1\n");
+      installCommands(configDir, commandsSrc);
+      const installed = join(configDir, "commands", "learn.md");
+      expect(readFileSync(installed, "utf8")).toContain("v1");
+
+      writeFileSync(join(commandsSrc, "learn.md"), "v2\n");
+      installCommands(configDir, commandsSrc);
+      expect(readFileSync(installed, "utf8")).toContain("v2");
+
+      expect(uninstallCommands(configDir, commandsSrc)).toEqual([installed]);
+      expect(existsSync(installed)).toBe(false);
+    } finally {
+      rmSync(commandsSrc, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("generateAgentFiles pruning", () => {
+  it("removes managed agent files for deleted agents and keeps foreign files", () => {
+    seedAgentHome(join(home, "agents", "keep"), "keep");
+    seedAgentHome(join(home, "agents", "gone"), "gone");
+    generateAgentFiles(configDir, home);
+    const foreign = join(configDir, "agents", "foreign.md");
+    writeFileSync(foreign, "not managed by openark\n");
+
+    rmSync(join(home, "agents", "gone"), { recursive: true, force: true });
+    generateAgentFiles(configDir, home);
+
+    expect(existsSync(join(configDir, "agents", "keep.md"))).toBe(true);
+    expect(existsSync(join(configDir, "agents", "gone.md"))).toBe(false);
+    expect(existsSync(foreign)).toBe(true);
+  });
+});
+
+describe("isOpenarkLink", () => {
+  it("recognizes links even when the home path has a trailing separator", () => {
+    const target = join(home, "agents", "defoko", "skills", "demo");
+    mkdirSync(target, { recursive: true });
+    const link = join(configDir, "skills", "demo");
+    mkdirSync(join(configDir, "skills"), { recursive: true });
+    symlinkSync(target, link);
+
+    expect(isOpenarkLink(link, home)).toBe(true);
+    expect(isOpenarkLink(link, `${home}/`)).toBe(true);
   });
 });
